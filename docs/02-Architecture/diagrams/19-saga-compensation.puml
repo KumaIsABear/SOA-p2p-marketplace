@@ -1,0 +1,36 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+participant "Marketplace Saga" as S
+queue RabbitMQ as MQ
+participant Wallet as W
+participant Inventory as I
+database MarketplaceWriteDb as DB
+note over S,W : Funds already held
+S -> MQ : TransferItemCommand
+MQ -> I : Transfer item
+alt Inventory full (confirmed no transfer)
+ I -> MQ : ItemTransferFailedEvent
+ MQ -> S : Failure
+ S -> MQ : RefundBuyerFundsCommand
+else Transferred, settlement permanently rejected
+ I -> MQ : ItemTransferredEvent
+ MQ -> S : Success
+ S -> MQ : SettleTradeCommand
+ MQ -> W : Settle
+ W -> MQ : TradeSettlementRejectedEvent (not committed)
+ MQ -> S : Confirmed rejection
+ S -> MQ : ReverseItemTransferCommand
+ MQ -> I : Restore seller locked item
+ I -> MQ : ItemTransferReversedEvent
+ MQ -> S : Reversed
+ S -> MQ : RefundBuyerFundsCommand
+end
+MQ -> W : Release hold for TradeId
+W -> W : Atomic release + ledger (idempotent)
+W -> MQ : BuyerFundsRefundedEvent
+MQ -> S : Confirmed refund
+S -> DB : Failed + Listing Active + outbox
+DB -> MQ : ListingReactivated / TradeFailed
+note over S,W : Unknown outcomes: retry or reconcile; no blind refund.
+@enduml

@@ -1,0 +1,41 @@
+@startuml
+title Auth Service - Entity Relationship Diagram
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+hide circle
+skinparam linetype ortho
+package "AuthDb" {
+  entity Users {
+    * UserId : uuid <<PK>>
+    --
+    Email : string
+    DisplayName : string
+    PasswordHash : string?
+    Role : string
+    Status : string
+    Version : long
+  }
+  entity ExternalIdentities {
+    * IdentityId : uuid <<PK>>
+    --
+    UserId : uuid <<FK>>
+    Provider : string
+    ProviderSubject : string <<UQ with Provider>>
+  }
+  entity RefreshTokens {
+    * TokenId : uuid <<PK>>
+    --
+    UserId : uuid <<FK>>
+    TokenHash : string
+    ExpiresAt : datetime
+    RevokedAt : datetime?
+  }
+}
+Users ||--o{ ExternalIdentities
+Users ||--o{ RefreshTokens
+note right of Users
+  PasswordHash nullable for Google-only accounts.
+  Seeded accounts use a password hash.
+  Do not auto-link accounts by email.
+end note
+@enduml

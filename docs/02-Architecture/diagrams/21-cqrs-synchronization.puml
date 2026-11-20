@@ -1,0 +1,23 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+participant "Marketplace Command" as C
+database MarketplaceWriteDb as DB
+participant "Outbox Dispatcher" as O
+queue RabbitMQ as MQ
+participant "Projection Worker" as W
+database MongoDB as M
+actor Player
+participant "Marketplace Query" as Q
+C -> DB : Commit listing change + outbox
+O -> DB : Read unsent outbox
+O -> MQ : Publish event (ListingId, Version, Snapshot)
+MQ -> W : Deliver / redeliver
+W -> M : Atomic version-guarded upsert
+note right of M : Sold/Cancelled tombstone retained
+W -> MQ : ACK after success
+Player -> Q : Browse (via Gateway)
+Q -> M : status=Active + filter + pagination
+M --> Q : catalog view
+Q --> Player : results (may lag)
+@enduml

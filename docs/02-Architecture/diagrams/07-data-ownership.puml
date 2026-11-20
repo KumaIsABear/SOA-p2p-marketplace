@@ -1,0 +1,28 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+left to right direction
+skinparam componentStyle rectangle
+component Auth as A
+component Wallet as W
+component Inventory as I
+component Marketplace as M
+component Admin as G
+node "One SQL Server instance" {
+ database AuthDb as ADB
+ database WalletDb as WDB
+ database InventoryDb as IDB
+ database MarketplaceWriteDb as MDB
+ database AdminAnalyticsDb as GDB
+}
+database "MongoDB\nMarketplaceReadDb" as R
+database "Redis\nNamespaced cache" as C
+A --> ADB
+W --> WDB
+I --> IDB
+M --> MDB
+M --> R
+M --> C : lock:*; price:* read
+G --> GDB
+G --> C : price:*; analytics:*
+@enduml

@@ -1,0 +1,193 @@
+@startuml
+title In-game P2P Marketplace - Container Architecture
+
+top to bottom direction
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 13
+skinparam componentStyle rectangle
+skinparam linetype ortho
+skinparam nodesep 45
+skinparam ranksep 55
+skinparam ArrowColor #64748B
+skinparam roundcorner 10
+
+skinparam rectangle {
+    BackgroundColor #F8FAFC
+    BorderColor #94A3B8
+}
+
+skinparam component {
+    BackgroundColor #DBEAFE
+    BorderColor #60A5FA
+    FontColor #1E3A8A
+}
+
+skinparam database {
+    BackgroundColor #DCFCE7
+    BorderColor #86C99C
+    FontColor #14532D
+}
+
+skinparam actor {
+    BackgroundColor #FFFFFF
+    BorderColor #475569
+}
+
+' ==========================
+' ACTORS
+' ==========================
+
+together {
+    actor "Player" as Player
+    actor "Game Master" as GM
+    actor "Customer Support" as CS
+}
+
+Player -[hidden]right-> GM
+GM -[hidden]right-> CS
+
+' ==========================
+' EXTERNAL SERVICES
+' ==========================
+
+cloud "Google Identity\nServices" as Google #F1F5F9
+
+cloud "ZaloPay Sandbox" as Payment #F1F5F9
+
+' ==========================
+' SYSTEM BOUNDARY
+' ==========================
+
+rectangle "In-game P2P Marketplace System" {
+
+    component "API Gateway\nYARP" as Gateway #DDD6FE
+
+    together {
+        component "Auth.API\n\nAuthentication\nIdentity & RBAC" as Auth
+
+        component "Inventory.API\n\nItem Ownership\nInventory Management" as Inventory
+
+        component "Marketplace.API\n\nCommand & Query\nSaga Orchestration" as Marketplace
+
+        component "Admin.API\n\nMarket Analytics\nCustomer Support" as Admin
+
+        component "Wallet.API\n\nWallet Management\nPayment Integration" as Wallet
+    }
+
+    ' Service alignment
+
+    Auth -[hidden]right-> Inventory
+    Inventory -[hidden]right-> Marketplace
+    Marketplace -[hidden]right-> Admin
+    Admin -[hidden]right-> Wallet
+
+    ' ==========================
+    ' DATA LAYER
+    ' ==========================
+
+    together {
+        database "AuthDb" as AuthDb
+        database "InventoryDb" as InventoryDb
+        database "MarketplaceWriteDb" as MarketDb
+        database "AdminAnalyticsDb" as AdminDb
+        database "WalletDb" as WalletDb
+    }
+
+    AuthDb -[hidden]right-> InventoryDb
+    InventoryDb -[hidden]right-> MarketDb
+    MarketDb -[hidden]right-> AdminDb
+    AdminDb -[hidden]right-> WalletDb
+
+    ' ==========================
+    ' SHARED INFRASTRUCTURE
+    ' ==========================
+
+    together {
+        queue "RabbitMQ\nMessage Broker" as RabbitMQ #FFEDD5
+
+        database "MongoDB\nMarketplaceReadDb" as MongoDB
+
+        database "Redis\nDistributed Lock\nCache & Analytics" as Redis #FEE2E2
+    }
+
+    RabbitMQ -[hidden]right-> MongoDB
+    MongoDB -[hidden]right-> Redis
+
+    MarketDb -[hidden]down-> MongoDB
+
+    ' ==========================
+    ' GATEWAY ROUTING
+    ' ==========================
+
+    Gateway -down-> Auth
+    Gateway -down-> Inventory
+    Gateway -down-> Marketplace
+    Gateway -down-> Admin
+    Gateway -down-> Wallet
+
+    ' ==========================
+    ' DATABASE OWNERSHIP
+    ' ==========================
+
+    Auth -down-> AuthDb
+    Inventory -down-> InventoryDb
+    Marketplace -down-> MarketDb
+    Admin -down-> AdminDb
+    Wallet -down-> WalletDb
+
+    ' ==========================
+    ' ASYNCHRONOUS MESSAGING
+    ' ==========================
+
+    Marketplace <..> RabbitMQ
+    Wallet <..> RabbitMQ
+    Inventory <..> RabbitMQ
+    RabbitMQ ..> Admin
+
+    ' ==========================
+    ' CACHE AND READ DATABASE
+    ' ==========================
+
+    Marketplace --> MongoDB
+    Marketplace --> Redis
+    Admin --> Redis
+}
+
+' ==========================
+' CLIENT ACCESS
+' ==========================
+
+Player -down-> Gateway
+GM -down-> Gateway
+CS -down-> Gateway
+
+' ==========================
+' THIRD-PARTY INTEGRATION
+' ==========================
+
+Auth -left-> Google : OIDC
+Wallet -right-> Payment : ZaloPay REST API
+
+' ZaloPay payment callback is routed
+' through API Gateway to Wallet.API.
+' Detailed in Payment Sequence Diagram.
+
+legend bottom
+    |= Color / Symbol |= Description |
+    |<#DDD6FE>    | API Gateway |
+    |<#DBEAFE>    | Microservice |
+    |<#DCFCE7>    | Database |
+    |<#FFEDD5>    | Message Broker |
+    |<#FEE2E2>    | Distributed Cache |
+    |<#F1F5F9>    | External Service |
+    | Solid Arrow | Synchronous / Data Access |
+    | Dashed Arrow | Asynchronous Messaging |
+
+    SQL databases are logically isolated
+    on a single SQL Server instance.
+endlegend
+
+@enduml

@@ -1,0 +1,41 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+left to right direction
+hide methods
+package "Identity" {
+ class User <<Aggregate Root>>
+ class ExternalIdentity
+ class RefreshToken
+ User "1" -- "0..*" ExternalIdentity
+ User "1" -- "0..*" RefreshToken
+}
+package "Wallet" {
+ class Wallet <<Aggregate Root>>
+ class FundHold
+ class WalletTransaction
+ class TopUpOrder <<Aggregate Root>>
+ Wallet "1" -- "0..*" FundHold
+ Wallet "1" -- "0..*" WalletTransaction
+}
+package "Inventory" {
+ class PlayerInventory <<Aggregate Root>>
+ class InventoryItem
+ class ItemTemplate <<Aggregate Root>>
+ class ItemTransfer <<Operation Record>>
+ PlayerInventory "1" *-- "0..*" InventoryItem
+ InventoryItem "0..*" --> "1" ItemTemplate
+}
+package "Marketplace" {
+ class Listing <<Aggregate Root>>
+ class Trade <<Aggregate Root>>
+ class SagaState <<Process Manager>>
+ Listing "1" -- "0..*" Trade
+ Trade "1" -- "0..1" SagaState
+}
+package "Admin" {
+ class PricePolicy <<Aggregate Root>>
+ class DailyMarketSummary <<Aggregate Root>>
+ class ModerationAction <<Audit Record>>
+}
+@enduml

@@ -1,0 +1,39 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+actor Seller
+participant "Marketplace.API" as M
+participant "Auth.API" as A
+database Redis as R
+participant "Inventory.API" as I
+database "MarketplaceWriteDb" as DB
+queue RabbitMQ as MQ
+Seller -> M : Create listing (via Gateway)
+M -> A : Check trade permission
+A --> M : Allowed
+M -> R : Read price snapshot
+R --> M : Price / band / version
+M -> M : Validate price and request
+M -> DB : Persist PendingLock intent
+M -> I : LockItem(listingId, itemId, sellerId)
+alt confirmed success
+ I --> M : Item locked + snapshot
+ M -> DB : Commit Active + outbox
+ alt committed
+  M --> Seller : Listing created
+  DB -> MQ : ListingCreated (outbox dispatcher)
+ else confirmed activation failure
+  M -> I : UnlockItem(listingId) / retry
+  I --> M : Unlocked
+  M -> DB : CreateFailed
+  M --> Seller : Creation failed
+ end
+else confirmed lock rejection
+ I --> M : Business rejection
+ M -> DB : CreateFailed
+ M --> Seller : Rejected
+else timeout / unknown
+ M --> Seller : Pending / inspect status
+ note over M,I : Resolve lock state by ListingId; do not blindly unlock.
+end
+@enduml

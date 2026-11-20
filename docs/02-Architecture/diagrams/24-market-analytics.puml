@@ -1,0 +1,22 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+participant Marketplace as M
+queue RabbitMQ as MQ
+participant "Admin Analytics Consumer" as A
+database AdminAnalyticsDb as DB
+database Redis as R
+participant "Daily Job (00:00)" as J
+actor GM
+M -> MQ : TradeCompletedEvent
+MQ -> A : tradeId, template, gross, fee, qty, time
+A -> DB : Idempotent Trade_Facts insert
+A -> R : Refresh versioned aggregate / reference price
+note over A,R : Rebuild affected day from facts on retry; avoid duplicate increments
+GM -> A : Query analytics / update price policy
+A -> DB : Persist policy / read historical summary
+A -> R : Update/read policy snapshot
+A --> GM : metrics and price policy
+J -> R : Read previous day's aggregate
+J -> DB : Upsert daily summary / reconcile facts
+@enduml

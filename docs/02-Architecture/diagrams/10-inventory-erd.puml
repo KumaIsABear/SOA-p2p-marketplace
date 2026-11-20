@@ -1,0 +1,53 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+hide circle
+skinparam linetype ortho
+package "InventoryDb" {
+  entity ItemTemplates {
+    * TemplateId : uuid <<PK>>
+    --
+    Name : string
+    Category : string
+    Rarity : string
+    Tradable : bool
+  }
+  entity Inventories {
+    * UserId : uuid <<PK>>
+    --
+    Capacity : int
+    ReservedSlots : int
+    Version : long
+  }
+  entity InventoryItems {
+    * ItemId : uuid <<PK>>
+    --
+    OwnerId : uuid <<FK>>
+    TemplateId : uuid <<FK>>
+    Quantity : int
+    Status : string
+    ListingId : uuid?
+    TradeId : uuid?
+  }
+  entity ItemLocks {
+    * ListingId : uuid <<PK>>
+    --
+    ItemId : uuid <<FK>>
+    SellerId : uuid
+    Status : string
+    UpdatedAt : datetime
+  }
+  entity ItemTransfers {
+    * TradeId : uuid <<PK>>
+    --
+    ItemId : uuid
+    SellerId : uuid
+    BuyerId : uuid
+    Status : string
+    Quantity : int
+    UpdatedAt : datetime
+  }
+}
+Inventories ||--o{ InventoryItems
+ItemTemplates ||--o{ InventoryItems
+@enduml

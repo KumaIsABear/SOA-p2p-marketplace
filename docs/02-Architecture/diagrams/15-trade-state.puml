@@ -1,0 +1,28 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+state HoldingFunds
+state Transferring
+state Settling
+state Finalizing
+state ReversingItem
+state ReleasingFunds
+state Completed
+state Failed
+[*] --> HoldingFunds : Purchase accepted
+HoldingFunds --> Failed : Confirmed no hold
+HoldingFunds --> Transferring : Funds held
+Transferring --> ReleasingFunds : Confirmed transfer rejected
+Transferring --> Settling : Item transferred pending
+Settling --> Finalizing : Settlement succeeded
+Settling --> ReversingItem : Terminal rejection / no settlement
+ReversingItem --> ReleasingFunds : Transfer reversed
+ReleasingFunds --> Failed : Hold released
+Finalizing --> Completed : Item finalized
+Completed --> [*]
+Failed --> [*]
+note right of Settling
+  Unknown outcome: retry/query, not refund.
+  Once settled: forward recovery only.
+end note
+@enduml

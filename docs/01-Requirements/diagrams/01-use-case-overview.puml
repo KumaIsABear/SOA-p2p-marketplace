@@ -1,0 +1,68 @@
+@startuml
+title In-game P2P Marketplace - Use Case Overview
+left to right direction
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam defaultFontName Arial
+skinparam usecase {
+ BackgroundColor #DBEAFE
+ BorderColor #60A5FA
+}
+actor Player as P
+actor Buyer as B
+actor Seller as S
+actor "Game Master" as GM
+actor "Customer Support" as CS
+actor "Google Identity" as Google
+actor "ZaloPay Sandbox" as Z
+actor "Core Game / Seeder" as Seeder
+actor "Daily Timer" as Timer
+B --|> P
+S --|> P
+rectangle "In-game P2P Marketplace" {
+ package "Identity" {
+  usecase "Sign in / Sign out" as U1
+  usecase "Sign in with Google" as U2
+ }
+ package "Player & Marketplace" {
+  usecase "View own wallet / ledger" as U3
+  usecase "View own inventory" as U4
+  usecase "Browse / search listings" as U5
+  usecase "View own trade history / status" as U6
+  usecase "Top up Gem" as U7
+  usecase "Purchase listing" as U8
+  usecase "Create listing" as U9
+  usecase "Cancel own listing" as U10
+  usecase "View own listings" as U11
+  usecase "Grant item" as U12
+ }
+ package "Operations" {
+  usecase "View market statistics" as U13
+  usecase "Configure price policy" as U14
+  usecase "Inspect trades" as U15
+  usecase "Moderate player account" as U16
+  usecase "Generate daily summary" as U17
+ }
+}
+P -- U1
+P -- U2
+P -- U3
+P -- U4
+P -- U5
+P -- U6
+B -- U7
+B -- U8
+S -- U9
+S -- U10
+S -- U11
+GM -- U1
+CS -- U1
+GM -- U13
+GM -- U14
+CS -- U15
+CS -- U16
+U2 -- Google
+U7 -- Z
+U12 -- Seeder
+U17 -- Timer
+@enduml

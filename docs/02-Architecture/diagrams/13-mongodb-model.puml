@@ -1,0 +1,28 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+class "Marketplace_Catalog" as Catalog <<MongoDB document>> {
+  _id : ListingId
+  version : long
+  status : string
+  sellerId : uuid
+  itemId : uuid
+  templateId : uuid
+  itemName : string
+  category : string
+  rarity : string
+  quantity : int
+  unitPrice : long
+  grossGem : long
+  createdAt : datetime
+  updatedAt : datetime
+}
+note right of Catalog
+  Index candidates:
+  status + unitPrice
+  status + createdAt
+  status + category + rarity
+  sellerId + status
+  Tombstones retain version after Sold/Cancelled.
+end note
+@enduml

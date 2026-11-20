@@ -1,0 +1,59 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+hide circle
+skinparam linetype ortho
+package "AdminAnalyticsDb" {
+  entity Price_Policies {
+    * TemplateId : uuid <<PK>>
+    --
+    BasePrice : long
+    BandBasisPoints : int
+    Version : long
+  }
+  entity Trade_Facts {
+    * TradeId : uuid <<PK>>
+    --
+    TemplateId : uuid
+    GrossGem : long
+    FeeGem : long
+    Quantity : int
+    CompletedAt : datetime
+  }
+  entity Price_Policy_Audits {
+    * AuditId : uuid <<PK>>
+    --
+    TemplateId : uuid <<FK>>
+    ActorId : uuid
+    BasePrice : long
+    BandBasisPoints : int
+    Version : long
+    Reason : string
+    CreatedAt : datetime
+  }
+  entity Market_Daily_Summaries {
+    * Day, TemplateId <<PK>>
+    --
+    TradeCount : long
+    TotalGrossGem : long
+    TotalFeeGem : long
+    Volume : long
+    MinUnitPrice : long?
+    MaxUnitPrice : long?
+    ReferencePrice : long
+    UpdatedAt : datetime
+  }
+  entity Moderation_Actions {
+    * ActionId : uuid <<PK>>
+    --
+    OperationId : uuid <<UQ>>
+    ActorId : uuid
+    TargetUserId : uuid
+    Action : string
+    Reason : string
+    Status : string
+    CreatedAt : datetime
+    UpdatedAt : datetime
+  }
+}
+@enduml

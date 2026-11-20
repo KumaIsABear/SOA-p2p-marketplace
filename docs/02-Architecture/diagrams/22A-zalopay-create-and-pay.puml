@@ -1,0 +1,81 @@
+
+@startuml
+title Figure 22A - ZaloPay: Create Order and Payment
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+skinparam maxMessageSize 44
+skinparam ParticipantPadding 10
+skinparam BoxPadding 8
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam ArrowColor #64748B
+
+autonumber
+
+actor Player
+participant "API Gateway" as G #DDD6FE
+participant "Wallet.API" as W #DBEAFE
+database "WalletDb" as D #DCFCE7
+participant "ZaloPay\nSandbox" as Z #F1F5F9
+
+== Phase 1 - Internal top-up ==
+
+Player -> G : POST /api/v1/wallet/top-ups\nJWT, Idempotency-Key, packageId
+G -> W : Authorized request
+
+W -> W : Validate package; generate IDs\nSnapshot VND and Gem amounts
+
+W -> D : Create/reuse Pending order\nTopUpId + app_trans_id
+
+D --> W : Persisted order
+
+break Exact replay of existing order
+    W --> G : Existing order / status
+    G --> Player : Same TopUpId
+end
+
+== Phase 2 - Provider order ==
+
+W -> W : Build request and MAC (Key1)
+W -> Z : POST /v2/create
+Z --> W : return_code, order_url
+
+alt Created successfully
+
+    W -> D : Save payment URL if still relevant
+
+    W --> G : 201 Created + TopUpOrder
+    G --> Player : Payment URL + TopUpId
+
+    == Phase 3 - Sandbox payment ==
+
+    Player -> Z : Open order_url and pay
+
+    Z --> Player : Payment result / redirect
+
+    note over W,Z
+        Redirect does not credit Gem.
+        Callback / reconciliation: Figure 22B.
+    end note
+
+else Confirmed creation rejection
+
+    W -> D : Mark Failed if not Paid
+
+    W --> G : 502 PAYMENT_CREATE_REJECTED
+    G --> Player : Order creation rejected
+
+else Unknown result / duplicate app_trans_id
+
+    W -> D : Keep Pending; schedule query
+
+    W --> G : 202 Accepted + status URL
+
+    G --> Player : Poll original TopUpId
+
+end
+
+@enduml

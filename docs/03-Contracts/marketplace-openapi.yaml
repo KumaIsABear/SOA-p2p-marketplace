@@ -1,0 +1,4361 @@
+openapi: 3.1.0
+info:
+  title: In-game Marketplace - REST API Contracts
+  version: 1.0.0
+  description: Proposed baseline; five microservices via YARP. Internal routes require per-caller credential and
+    correct internal origin. See plain-text companion for state and event contracts.
+servers:
+- url: http://localhost:8080
+  description: Local YARP (public routes only)
+tags:
+- name: Auth
+- name: Wallet
+- name: Inventory
+- name: Marketplace
+- name: Admin
+paths:
+  /api/v1/auth/login:
+    post:
+      tags:
+      - Auth
+      summary: AUTH-01 login
+      operationId: AUTH_01
+      description: Đăng nhập bằng mật khẩu cho tài khoản đã seed; không public register.
+      x-fr: AUTH-01
+      x-access: Anonymous
+      security: []
+      parameters:
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication failed — INVALID_CREDENTIALS
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '429':
+          description: Too many requests — RATE_LIMITED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/auth/google:
+    post:
+      tags:
+      - Auth
+      summary: AUTH-02 google
+      operationId: AUTH_02
+      description: Xác minh Google ID token, lấy subject; tạo Player nếu chưa có. Không tự gán GM/CS hoặc liên kết
+        theo email.
+      x-fr: AUTH-01 + Google
+      x-access: Anonymous
+      security: []
+      parameters:
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GoogleLoginRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication failed — INVALID_GOOGLE_TOKEN
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Conflict — IDENTITY_CONFLICT
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '429':
+          description: Too many requests — RATE_LIMITED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/auth/refresh:
+    post:
+      tags:
+      - Auth
+      summary: AUTH-03 refresh
+      operationId: AUTH_03
+      description: Rotate refresh token atomically; chỉ hash lưu DB, token cũ revoked.
+      x-fr: AUTH-02
+      x-access: Anonymous
+      security: []
+      parameters:
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication failed — INVALID_REFRESH_TOKEN
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '429':
+          description: Too many requests — RATE_LIMITED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/auth/logout:
+    post:
+      tags:
+      - Auth
+      summary: AUTH-04 logout
+      operationId: AUTH_04
+      description: Revoke refresh token nếu tồn tại; trả 204 cả khi đã revoke/không tồn tại. Access token hết hạn
+        tự nhiên; ban check vẫn áp dụng.
+      x-fr: AUTH-02
+      x-access: RefreshToken
+      security: []
+      parameters:
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '204':
+          description: No Content
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/auth/me:
+    get:
+      tags:
+      - Auth
+      summary: AUTH-05 me
+      operationId: AUTH_05
+      description: Trả user theo JWT sub; không nhận userId từ client.
+      x-fr: AUTH-01
+      x-access: Player|GM|CS
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /internal/v1/auth/users/{userId}/status:
+    get:
+      tags:
+      - Auth
+      summary: AUTH-I01 status
+      operationId: AUTH_I01
+      description: Nguồn chuẩn status + role. Gateway fail closed nếu Auth lỗi; Marketplace kiểm lại trước lệnh
+        thay đổi.
+      x-fr: AUTH-04
+      x-access: Service:gateway,marketplace,admin
+      security:
+      - ServiceKey: []
+      servers:
+      - url: http://auth-api:8080
+        description: Private Docker network only
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessStatus'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Resource not found — USER_NOT_FOUND
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    patch:
+      tags:
+      - Auth
+      summary: AUTH-I02 status
+      operationId: AUTH_I02
+      description: Chỉ sửa tài khoản Player; operationId idempotent, không cấp role, revoke refresh nếu Banned.
+      x-fr: CS-02,AUTH-04
+      x-access: Service:admin
+      security:
+      - ServiceKey: []
+      servers:
+      - url: http://auth-api:8080
+        description: Private Docker network only
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InternalModerationRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessStatus'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Resource not found — USER_NOT_FOUND
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Conflict — IDEMPOTENCY_CONFLICT, INVALID_ACCOUNT_TARGET
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/wallet/balance:
+    get:
+      tags:
+      - Wallet
+      summary: WAL-01 balance
+      operationId: WAL_01
+      description: Ví theo sub; khởi tạo ví rỗng idempotent khi cần.
+      x-fr: WAL-01
+      x-access: Player
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Balance'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/wallet/transactions:
+    get:
+      tags:
+      - Wallet
+      summary: WAL-02 transactions
+      operationId: WAL_02
+      description: Ledger cá nhân, mới nhất trước.
+      x-fr: WAL-01,QRY-04
+      x-access: Player
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          default: 1
+      - name: pageSize
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          default: 20
+          maximum: 100
+      - name: type
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - TopUp
+          - Hold
+          - SettlementDebit
+          - SettlementCredit
+          - Release
+          - TaxBurn
+      - name: tradeId
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletTransactionPage'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/wallet/top-up-packages:
+    get:
+      tags:
+      - Wallet
+      summary: WAL-03 top-up-packages
+      operationId: WAL_03
+      description: Gói nạp từ cấu hình server; không nhận tỷ giá client.
+      x-fr: WAL-02
+      x-access: Player
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopUpPackages'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/wallet/top-ups:
+    post:
+      tags:
+      - Wallet
+      summary: WAL-04 top-ups
+      operationId: WAL_04
+      description: 201 khi nhận URL; 202 nếu đã lưu Pending nhưng kết quả create chưa rõ, không tạo đơn mới mù.
+        Location trỏ order. TradeRestricted vẫn được xem/nạp theo quyết định đề xuất.
+      x-fr: WAL-02
+      x-access: Player
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTopUpRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopUpOrder'
+          headers:
+            Location:
+              description: Status or resource URI (where applicable)
+              schema:
+                type: string
+        '202':
+          description: Accepted; processing not complete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopUpOrder'
+          headers:
+            Location:
+              description: Status or resource URI (where applicable)
+              schema:
+                type: string
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Resource not found — PACKAGE_NOT_FOUND
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Conflict — IDEMPOTENCY_CONFLICT
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: Provider returned rejection or bad response — PAYMENT_CREATE_REJECTED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/wallet/top-ups/{topUpId}:
+    get:
+      tags:
+      - Wallet
+      summary: WAL-05 {topUpId}
+      operationId: WAL_05
+      description: SQL authoritative, chỉ chủ đơn; query ZaloPay do job, không gọi provider mỗi lần poll.
+      x-fr: WAL-02,WAL-03
+      x-access: Player
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: topUpId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopUpOrder'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Resource not found — TOPUP_NOT_FOUND
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/wallet/zalopay/callback:
+    post:
+      tags:
+      - Wallet
+      summary: WAL-06 callback
+      operationId: WAL_06
+      description: Body provider-specific; verify MAC Key2 trên nguyên chuỗi data; local tx cộng ví, ledger và Paid;
+        không cần JWT. 200 + mã provider kể cả invalid MAC/duplicate/retry; 400 chỉ khi HTTP body không parse được.
+      x-fr: WAL-03
+      x-access: ZaloPayMAC
+      security: []
+      parameters:
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ZaloPayCallbackRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ZaloPayCallbackResponse'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /internal/v1/wallet/trades/{tradeId}/trace:
+    get:
+      tags:
+      - Wallet
+      summary: WAL-I01 trace
+      operationId: WAL_I01
+      description: Trả hold nullable và ledger [] nếu bước chưa chạy; trạng thái có thể dùng để đối soát Saga.
+      x-fr: CS-01,WAL-04,WAL-05,WAL-06
+      x-access: Service:admin,marketplace
+      security:
+      - ServiceKey: []
+      servers:
+      - url: http://wallet-api:8080
+        description: Private Docker network only
+      parameters:
+      - name: tradeId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletTradeTrace'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /internal/v1/wallet/supply:
+    get:
+      tags:
+      - Wallet
+      summary: WAL-I02 supply
+      operationId: WAL_I02
+      description: Tổng Gem hiện có trong ví, gồm held; dùng SQL aggregate có cache ngắn nếu cần; khác tổng volume
+        giao dịch.
+      x-fr: GM-03
+      x-access: Service:admin
+      security:
+      - ServiceKey: []
+      servers:
+      - url: http://wallet-api:8080
+        description: Private Docker network only
+      parameters:
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletSupply'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/inventory/items:
+    get:
+      tags:
+      - Inventory
+      summary: INV-01 items
+      operationId: INV_01
+      description: Kho của sub, bao gồm Locked/PendingSettlement; lazy create capacity mặc định. MVP kho nhỏ, không
+        cần phân trang.
+      x-fr: INV-01
+      x-access: Player
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryView'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /internal/v1/inventory/items:
+    post:
+      tags:
+      - Inventory
+      summary: INV-I01 items
+      operationId: INV_I01
+      description: Chỉ seeder nội bộ, template từ dữ liệu seed. Quy tắc MVP quantity=1 hoặc toàn stack; một request
+        tạo một item/stack.
+      x-fr: INV-02
+      x-access: Service:seeder
+      security:
+      - ServiceKey: []
+      servers:
+      - url: http://inventory-api:8080
+        description: Private Docker network only
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrantItemRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryItem'
+          headers:
+            Location:
+              description: Status or resource URI (where applicable)
+              schema:
+                type: string
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Resource not found — TEMPLATE_NOT_FOUND
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Conflict — INVENTORY_FULL, IDEMPOTENCY_CONFLICT
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /internal/v1/inventory/items/{itemId}:
+    get:
+      tags:
+      - Inventory
+      summary: INV-I02 {itemId}
+      operationId: INV_I02
+      description: Đọc metadata authoritative trước khi validate giá; lock vẫn phải kiểm lại owner, template, quantity,
+        tradable.
+      x-fr: INV-03
+      x-access: Service:marketplace
+      security:
+      - ServiceKey: []
+      servers:
+      - url: http://inventory-api:8080
+        description: Private Docker network only
+      parameters:
+      - name: itemId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryItem'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Resource not found — ITEM_NOT_FOUND
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /internal/v1/inventory/lock:
+    post:
+      tags:
+      - Inventory
+      summary: INV-I03 lock
+      operationId: INV_I03
+      description: Atomic lock theo listingId; replay cùng payload trả trạng thái lock cũ; lock đã release không
+        được tái tạo bằng key cũ.
+      x-fr: INV-03
+      x-access: Service:marketplace
+      security:
+      - ServiceKey: []
+      servers:
+      - url: http://inventory-api:8080
+        description: Private Docker network only
+      parameters:
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LockItemRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LockItemResult'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Resource not found — ITEM_NOT_FOUND
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Conflict — ITEM_NOT_OWNED, ITEM_NOT_TRADABLE, ITEM_LOCKED, QUANTITY_MISMATCH, IDEMPOTENCY_CONFLICT
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /internal/v1/inventory/locks/{listingId}/unlock:
+    post:
+      tags:
+      - Inventory
+      summary: INV-I04 unlock
+      operationId: INV_I04
+      description: Dùng cho bồi hoàn create lỗi xác định; release đúng listingId; idempotent, tombstone chống lock
+        muộn.
+      x-fr: INV-04
+      x-access: Service:marketplace
+      security:
+      - ServiceKey: []
+      servers:
+      - url: http://inventory-api:8080
+        description: Private Docker network only
+      parameters:
+      - name: listingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnlockItemRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemLockStatus'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Conflict — ITEM_LOCK_MISMATCH, TRANSFER_PENDING
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /internal/v1/inventory/locks/{listingId}:
+    get:
+      tags:
+      - Inventory
+      summary: INV-I05 {listingId}
+      operationId: INV_I05
+      description: NotFound nếu chưa có record; không suy ra an toàn khi request lock cũ vẫn có thể đang chạy.
+      x-fr: INV-03,INV-04
+      x-access: Service:marketplace
+      security:
+      - ServiceKey: []
+      servers:
+      - url: http://inventory-api:8080
+        description: Private Docker network only
+      parameters:
+      - name: listingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemLockStatus'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /internal/v1/inventory/trades/{tradeId}/trace:
+    get:
+      tags:
+      - Inventory
+      summary: INV-I06 trace
+      operationId: INV_I06
+      description: 404 là chưa có transfer record, không chứng minh command đang bay sẽ không commit.
+      x-fr: INV-05,CS-01
+      x-access: Service:admin,marketplace
+      security:
+      - ServiceKey: []
+      servers:
+      - url: http://inventory-api:8080
+        description: Private Docker network only
+      parameters:
+      - name: tradeId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemTransferTrace'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Resource not found — TRANSFER_NOT_FOUND
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/marketplace/listings:
+    post:
+      tags:
+      - Marketplace
+      summary: MKT-01 listings
+      operationId: MKT_01
+      description: Validate owner và price snapshot; persist PendingLock, lock REST, commit Active+outbox. 202 nếu
+        đã persist nhưng chưa rõ lock/activation; poll listing theo Location. Không tin sellerId/template/giá tham
+        chiếu từ client.
+      x-fr: MKT-01,MKT-02
+      x-access: Player
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateListingRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Listing'
+          headers:
+            Location:
+              description: Status or resource URI (where applicable)
+              schema:
+                type: string
+        '202':
+          description: Accepted; processing not complete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Listing'
+          headers:
+            Location:
+              description: Status or resource URI (where applicable)
+              schema:
+                type: string
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED, TRADE_RESTRICTED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE, PRICE_POLICY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Resource not found — ITEM_NOT_FOUND
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Conflict — ITEM_LOCKED, ITEM_NOT_OWNED, ITEM_NOT_TRADABLE, QUANTITY_MISMATCH, IDEMPOTENCY_CONFLICT
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Business validation failed — PRICE_OUT_OF_BOUNDS
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    get:
+      tags:
+      - Marketplace
+      summary: MKT-04 listings
+      operationId: MKT_04
+      description: MongoDB chỉ Active; eventual consistency; stable tie-break listingId.
+      x-fr: QRY-02
+      x-access: Player
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 100
+      - name: category
+        in: query
+        required: false
+        schema:
+          type: string
+          minLength: 1
+      - name: rarity
+        in: query
+        required: false
+        schema:
+          type: string
+          minLength: 1
+      - name: minPrice
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      - name: maxPrice
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      - name: sort
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - priceAsc
+          - priceDesc
+          - newest
+          default: newest
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          default: 1
+      - name: pageSize
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          default: 20
+          maximum: 100
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListingPage'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/marketplace/listings/{listingId}:
+    delete:
+      tags:
+      - Marketplace
+      summary: MKT-02 {listingId}
+      operationId: MKT_02
+      description: Chỉ seller; TradeRestricted được hủy; atomic Active->Cancelled + event; replay Cancelled trả
+        200. Giải phóng item eventual.
+      x-fr: MKT-03
+      x-access: Player
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: listingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelListingResult'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Resource not found — LISTING_NOT_FOUND
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Conflict — LISTING_BUSY, LISTING_NOT_ACTIVE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    get:
+      tags:
+      - Marketplace
+      summary: MKT-05 {listingId}
+      operationId: MKT_05
+      description: SQL snapshot cho detail/poll; non-owner chỉ xem Active, seller xem mọi trạng thái.
+      x-fr: MKT-02,QRY-02
+      x-access: Player
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: listingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Listing'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Resource not found — LISTING_NOT_FOUND
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/marketplace/listings/{listingId}/purchase:
+    post:
+      tags:
+      - Marketplace
+      summary: MKT-03 purchase
+      operationId: MKT_03
+      description: Không request body; full listing. Redis lock rồi SQL atomic claim + Trade/Saga/outbox. Trả 202
+        chỉ khi commit; insufficient funds/full inventory báo ở GET trade. Replay same key kể cả trade đã terminal
+        trả tradeId cũ và trạng thái hiện tại.
+      x-fr: MKT-04,MKT-05
+      x-access: Player
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: listingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Accepted; processing not complete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseAccepted'
+          headers:
+            Location:
+              description: Status or resource URI (where applicable)
+              schema:
+                type: string
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED, TRADE_RESTRICTED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Resource not found — LISTING_NOT_FOUND
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Conflict — LISTING_BUSY, LISTING_NOT_ACTIVE, SELF_PURCHASE, IDEMPOTENCY_CONFLICT
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/marketplace/my-listings:
+    get:
+      tags:
+      - Marketplace
+      summary: MKT-06 my-listings
+      operationId: MKT_06
+      description: SQL authoritative cho seller. Default Active; status filter.
+      x-fr: QRY-03
+      x-access: Player
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - PendingLock
+          - Active
+          - Processing
+          - Sold
+          - Cancelled
+          - CreateFailed
+          default: Active
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          default: 1
+      - name: pageSize
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          default: 20
+          maximum: 100
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListingPage'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/marketplace/history:
+    get:
+      tags:
+      - Marketplace
+      summary: MKT-07 history
+      operationId: MKT_07
+      description: SQL lịch sử buyer/seller; mặc định Completed, cho phép lọc status. Không join WalletDb.
+      x-fr: QRY-04
+      x-access: Player
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: side
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - buy
+          - sell
+          - all
+          default: all
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - HoldingFunds
+          - Transferring
+          - Settling
+          - Finalizing
+          - ReversingItem
+          - ReleasingFunds
+          - Completed
+          - Failed
+          default: Completed
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          default: 1
+      - name: pageSize
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          default: 20
+          maximum: 100
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TradePage'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/marketplace/trades/{tradeId}:
+    get:
+      tags:
+      - Marketplace
+      summary: MKT-08 {tradeId}
+      operationId: MKT_08
+      description: SQL trạng thái Saga; chỉ buyer hoặc seller; không dùng Mongo; failureCode khi Failed, requiresReview
+        khi không rõ kết quả.
+      x-fr: MKT-05,QRY-04
+      x-access: Player
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: tradeId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trade'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Resource not found — TRADE_NOT_FOUND
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /internal/v1/marketplace/trades/{tradeId}/trace:
+    get:
+      tags:
+      - Marketplace
+      summary: MKT-I01 trace
+      operationId: MKT_I01
+      description: Trade, correlation và saga steps từ MarketplaceWriteDb.
+      x-fr: CS-01
+      x-access: Service:admin
+      security:
+      - ServiceKey: []
+      servers:
+      - url: http://marketplace-api:8080
+        description: Private Docker network only
+      parameters:
+      - name: tradeId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketTradeTrace'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Resource not found — TRADE_NOT_FOUND
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /internal/v1/marketplace/trades:
+    get:
+      tags:
+      - Marketplace
+      summary: MKT-I02 trades
+      operationId: MKT_I02
+      description: Tìm theo userId (buyer/seller), không query chéo DB.
+      x-fr: CS-01
+      x-access: Service:admin
+      security:
+      - ServiceKey: []
+      servers:
+      - url: http://marketplace-api:8080
+        description: Private Docker network only
+      parameters:
+      - name: userId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - HoldingFunds
+          - Transferring
+          - Settling
+          - Finalizing
+          - ReversingItem
+          - ReleasingFunds
+          - Completed
+          - Failed
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          default: 1
+      - name: pageSize
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          default: 20
+          maximum: 100
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TradePage'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /internal/v1/marketplace/stats:
+    get:
+      tags:
+      - Marketplace
+      summary: MKT-I03 stats
+      operationId: MKT_I03
+      description: Đếm listing Active trên SQL; phục vụ dashboard tổng hợp, không phải Mongo authoritative.
+      x-fr: GM-03
+      x-access: Service:admin
+      security:
+      - ServiceKey: []
+      servers:
+      - url: http://marketplace-api:8080
+        description: Private Docker network only
+      parameters:
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketListingStats'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/admin/analytics:
+    get:
+      tags:
+      - Admin
+      summary: ADM-01 analytics
+      operationId: ADM_01
+      description: Tổng hợp ngày theo Redis/SQL bền vững, thêm supply và active count từ internal REST; khi source
+        lỗi trả partial=true/null, không giả định 0.
+      x-fr: GM-01,GM-02,GM-03
+      x-access: GM
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: day
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketOverview'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/admin/analytics/history:
+    get:
+      tags:
+      - Admin
+      summary: ADM-02 history
+      operationId: ADM_02
+      description: Theo ngày và template; ngày hiện tại dùng cache, ngày cũ SQL.
+      x-fr: GM-02,GM-03
+      x-access: GM
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: templateId
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: from
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          default: 1
+      - name: pageSize
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          default: 20
+          maximum: 100
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketStatisticPage'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/admin/price-policies:
+    get:
+      tags:
+      - Admin
+      summary: ADM-03 price-policies
+      operationId: ADM_03
+      description: Đọc chính sách giá theo template.
+      x-fr: GM-04
+      x-access: GM
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          default: 1
+      - name: pageSize
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          default: 20
+          maximum: 100
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PricePolicyPage'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/admin/price-policies/{templateId}:
+    put:
+      tags:
+      - Admin
+      summary: ADM-04 {templateId}
+      operationId: ADM_04
+      description: Upsert với expectedVersion; version=0 tạo mới cho template đã seed; commit SQL rồi refresh Redis.
+        Lưu audit; không đổi giá listing cũ.
+      x-fr: GM-04
+      x-access: GM
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: templateId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PricePolicyRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PricePolicy'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Conflict — VERSION_CONFLICT
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Business validation failed — INVALID_PRICE_POLICY
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/admin/trades/{tradeId}/trace:
+    get:
+      tags:
+      - Admin
+      summary: ADM-05 trace
+      operationId: ADM_05
+      description: Marketplace bắt buộc; Wallet/Inventory có thể partial, phân biệt chưa có record và dependency
+        lỗi.
+      x-fr: CS-01
+      x-access: CS
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: tradeId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportTradeTrace'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Resource not found — TRADE_NOT_FOUND
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/admin/trades:
+    get:
+      tags:
+      - Admin
+      summary: ADM-06 trades
+      operationId: ADM_06
+      description: Proxy authorized search theo userId.
+      x-fr: CS-01
+      x-access: CS
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: userId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - HoldingFunds
+          - Transferring
+          - Settling
+          - Finalizing
+          - ReversingItem
+          - ReleasingFunds
+          - Completed
+          - Failed
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          default: 1
+      - name: pageSize
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          default: 20
+          maximum: 100
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TradePage'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/admin/users/{userId}/status:
+    patch:
+      tags:
+      - Admin
+      summary: ADM-07 status
+      operationId: ADM_07
+      description: Audit request, call Auth với operationId bền vững, record outcome. Chỉ Player. Timeout retry
+        cùng key, không khẳng định ban thành công khi chưa xác nhận.
+      x-fr: CS-02,AUTH-04
+      x-access: CS
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModerationRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModerationResult'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN, ACCOUNT_BANNED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Invalid request — VALIDATION_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Resource not found — USER_NOT_FOUND
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Conflict — IDEMPOTENCY_CONFLICT, INVALID_ACCOUNT_TARGET
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /internal/v1/admin/price-policies/{templateId}:
+    get:
+      tags:
+      - Admin
+      summary: ADM-I01 price-policy fallback
+      operationId: ADM_I01
+      description: Fallback khi Marketplace đọc Redis price:policy:{templateId} bị cache miss; Admin đọc SQL và refresh cache.
+      x-fr: MKT-01,GM-04
+      x-access: Service:marketplace
+      security:
+      - ServiceKey: []
+      servers:
+      - url: http://admin-api:8080
+        description: Private Docker network only
+      parameters:
+      - name: templateId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Correlation-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PricePolicy'
+        '401':
+          description: Authentication failed — UNAUTHENTICATED
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — FORBIDDEN
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Resource not found — PRICE_POLICY_NOT_FOUND
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Unexpected error — INTERNAL_ERROR
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Dependency unavailable or result unknown — DEPENDENCY_UNAVAILABLE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ServiceKey:
+      type: apiKey
+      in: header
+      name: X-Service-Key
+  schemas:
+    ProblemDetails:
+      type: object
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+          minLength: 1
+        status:
+          type: integer
+          format: int32
+        detail:
+          type: string
+        instance:
+          type: string
+          minLength: 1
+        code:
+          type: string
+          minLength: 1
+        traceId:
+          type: string
+          minLength: 1
+        errors:
+          type: array
+          items:
+            type: string
+      required:
+      - type
+      - title
+      - status
+      - detail
+      - instance
+      - code
+      - traceId
+      description: Lỗi REST; errors là danh sách lỗi validation, không chứa secret.
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 1
+      required:
+      - email
+      - password
+    GoogleLoginRequest:
+      type: object
+      properties:
+        idToken:
+          type: string
+          minLength: 1
+          description: Google credential ID token
+        nonce:
+          type: string
+          minLength: 1
+          description: chỉ nếu đã thiết lập challenge phía server
+      required:
+      - idToken
+    RefreshRequest:
+      type: object
+      properties:
+        refreshToken:
+          type: string
+          minLength: 1
+      required:
+      - refreshToken
+    User:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+          minLength: 1
+        role:
+          type: string
+          enum:
+          - Player
+          - GM
+          - CS
+        status:
+          type: string
+          enum:
+          - Active
+          - TradeRestricted
+          - Banned
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - userId
+      - email
+      - displayName
+      - role
+      - status
+      - version
+    TokenResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+          minLength: 1
+        refreshToken:
+          type: string
+          minLength: 1
+        tokenType:
+          type: string
+          enum:
+          - Bearer
+        expiresIn:
+          type: integer
+          format: int32
+          minimum: 1
+          description: giây
+        user:
+          $ref: '#/components/schemas/User'
+      required:
+      - accessToken
+      - refreshToken
+      - tokenType
+      - expiresIn
+      - user
+    AccessStatus:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum:
+          - Player
+          - GM
+          - CS
+        status:
+          type: string
+          enum:
+          - Active
+          - TradeRestricted
+          - Banned
+        canTrade:
+          type: boolean
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - userId
+      - role
+      - status
+      - canTrade
+      - version
+    ModerationRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+          - Active
+          - TradeRestricted
+          - Banned
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: tối đa 500 ký tự
+      required:
+      - status
+      - reason
+    InternalModerationRequest:
+      type: object
+      properties:
+        operationId:
+          type: string
+          format: uuid
+        actorId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - Active
+          - TradeRestricted
+          - Banned
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+      required:
+      - operationId
+      - actorId
+      - status
+      - reason
+    ModerationResult:
+      type: object
+      properties:
+        actionId:
+          type: string
+          format: uuid
+        targetUserId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - Active
+          - TradeRestricted
+          - Banned
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+      - actionId
+      - targetUserId
+      - status
+      - version
+      - updatedAt
+    Balance:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        currency:
+          type: string
+          enum:
+          - GEM
+        totalBalance:
+          type: integer
+          format: int64
+          minimum: 0
+        holdBalance:
+          type: integer
+          format: int64
+          minimum: 0
+        availableBalance:
+          type: integer
+          format: int64
+          minimum: 0
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - userId
+      - currency
+      - totalBalance
+      - holdBalance
+      - availableBalance
+      - version
+    TopUpPackage:
+      type: object
+      properties:
+        packageId:
+          type: string
+          minLength: 1
+        amountVnd:
+          type: integer
+          format: int64
+          minimum: 1
+        gemAmount:
+          type: integer
+          format: int64
+          minimum: 1
+      required:
+      - packageId
+      - amountVnd
+      - gemAmount
+    TopUpPackages:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopUpPackage'
+      required:
+      - items
+    CreateTopUpRequest:
+      type: object
+      properties:
+        packageId:
+          type: string
+          minLength: 1
+          description: giá từ danh mục server
+      required:
+      - packageId
+    TopUpOrder:
+      type: object
+      properties:
+        topUpId:
+          type: string
+          format: uuid
+        provider:
+          type: string
+          enum:
+          - ZALOPAY
+        appTransId:
+          type: string
+          minLength: 1
+        providerTxnId:
+          type:
+          - integer
+          - 'null'
+          format: int64
+        amountVnd:
+          type: integer
+          format: int64
+          minimum: 1
+        gemAmount:
+          type: integer
+          format: int64
+          minimum: 1
+        status:
+          type: string
+          enum:
+          - Pending
+          - Paid
+          - Failed
+          - Expired
+        paymentUrl:
+          type:
+          - string
+          - 'null'
+          format: uri
+        createdAt:
+          type: string
+          format: date-time
+        paidAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      required:
+      - topUpId
+      - provider
+      - appTransId
+      - providerTxnId
+      - amountVnd
+      - gemAmount
+      - status
+      - paymentUrl
+      - createdAt
+      - paidAt
+    ZaloPayCallbackRequest:
+      type: object
+      properties:
+        data:
+          type: string
+          minLength: 1
+          description: chuỗi JSON gốc, không serialize lại
+        mac:
+          type: string
+          minLength: 1
+        type:
+          type: integer
+          format: int32
+          description: 1 = Order; các giá trị khác do Wallet.API kiểm tra và trả HTTP 200 với return_code = -1.
+      required:
+      - data
+      - mac
+      - type
+    ZaloPayCallbackResponse:
+      type: object
+      properties:
+        return_code:
+          type: integer
+          format: int32
+          description: mã 1, 2, 0 hoặc -1
+          enum:
+          - -1
+          - 0
+          - 1
+          - 2
+        return_message:
+          type: string
+          minLength: 1
+      required:
+      - return_code
+      - return_message
+    WalletTransaction:
+      type: object
+      properties:
+        entryId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        tradeId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        topUpId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        totalDelta:
+          type: integer
+          format: int64
+        holdDelta:
+          type: integer
+          format: int64
+        feeGem:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          minimum: 0
+          description: Chỉ có giá trị khi type = TaxBurn (ghi theo sellerId), các loại khác null.
+        type:
+          type: string
+          enum:
+          - TopUp
+          - Hold
+          - SettlementDebit
+          - SettlementCredit
+          - Release
+          - TaxBurn
+        createdAt:
+          type: string
+          format: date-time
+      required:
+      - entryId
+      - userId
+      - tradeId
+      - topUpId
+      - totalDelta
+      - holdDelta
+      - feeGem
+      - type
+      - createdAt
+    WalletTransactionPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WalletTransaction'
+        page:
+          type: integer
+          format: int32
+          minimum: 1
+        pageSize:
+          type: integer
+          format: int32
+          minimum: 1
+        totalCount:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - items
+      - page
+      - pageSize
+      - totalCount
+    FundHold:
+      type: object
+      properties:
+        tradeId:
+          type: string
+          format: uuid
+        buyerId:
+          type: string
+          format: uuid
+        amount:
+          type: integer
+          format: int64
+          minimum: 1
+        status:
+          type: string
+          enum:
+          - Held
+          - Settled
+          - Released
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+      - tradeId
+      - buyerId
+      - amount
+      - status
+      - updatedAt
+    WalletTradeTrace:
+      type: object
+      properties:
+        tradeId:
+          type: string
+          format: uuid
+        hold:
+          anyOf:
+          - $ref: '#/components/schemas/FundHold'
+          - type: 'null'
+        settlementStatus:
+          type: string
+          enum:
+          - NotSettled
+          - Settled
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/WalletTransaction'
+      required:
+      - tradeId
+      - hold
+      - settlementStatus
+      - entries
+    WalletSupply:
+      type: object
+      properties:
+        totalGem:
+          type: integer
+          format: int64
+          minimum: 0
+        heldGem:
+          type: integer
+          format: int64
+          minimum: 0
+        availableGem:
+          type: integer
+          format: int64
+          minimum: 0
+        asOf:
+          type: string
+          format: date-time
+      required:
+      - totalGem
+      - heldGem
+      - availableGem
+      - asOf
+    ItemTemplate:
+      type: object
+      properties:
+        templateId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+        category:
+          type: string
+          minLength: 1
+        rarity:
+          type: string
+          minLength: 1
+        tradable:
+          type: boolean
+      required:
+      - templateId
+      - name
+      - category
+      - rarity
+      - tradable
+    InventoryItem:
+      type: object
+      properties:
+        itemId:
+          type: string
+          format: uuid
+        ownerId:
+          type: string
+          format: uuid
+        templateId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+        category:
+          type: string
+          minLength: 1
+        rarity:
+          type: string
+          minLength: 1
+        tradable:
+          type: boolean
+        quantity:
+          type: integer
+          format: int32
+          minimum: 1
+        status:
+          type: string
+          enum:
+          - Available
+          - Locked
+          - PendingSettlement
+        listingId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        tradeId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      required:
+      - itemId
+      - ownerId
+      - templateId
+      - name
+      - category
+      - rarity
+      - tradable
+      - quantity
+      - status
+      - listingId
+      - tradeId
+    InventoryView:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        capacity:
+          type: integer
+          format: int32
+          minimum: 0
+        usedSlots:
+          type: integer
+          format: int32
+          minimum: 0
+          description: gồm slot reverse dự trữ
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InventoryItem'
+      required:
+      - userId
+      - capacity
+      - usedSlots
+      - items
+    
+    GrantItemRequest:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        templateId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          format: int32
+          minimum: 1
+      required:
+      - userId
+      - templateId
+      - quantity
+    LockItemRequest:
+      type: object
+      properties:
+        listingId:
+          type: string
+          format: uuid
+        itemId:
+          type: string
+          format: uuid
+        sellerId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          format: int32
+          minimum: 1
+        templateId:
+          type: string
+          format: uuid
+      required:
+      - listingId
+      - itemId
+      - sellerId
+      - quantity
+      - templateId
+    LockItemResult:
+      type: object
+      properties:
+        listingId:
+          type: string
+          format: uuid
+        item:
+          $ref: '#/components/schemas/InventoryItem'
+        lockedAt:
+          type: string
+          format: date-time
+      required:
+      - listingId
+      - item
+      - lockedAt
+    UnlockItemRequest:
+      type: object
+      properties:
+        itemId:
+          type: string
+          format: uuid
+        sellerId:
+          type: string
+          format: uuid
+      required:
+      - itemId
+      - sellerId
+    ItemLockStatus:
+      type: object
+      properties:
+        listingId:
+          type: string
+          format: uuid
+        itemId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        status:
+          type: string
+          enum:
+          - Locked
+          - Released
+          - NotFound
+      required:
+      - listingId
+      - itemId
+      - status
+    ItemTransferTrace:
+      type: object
+      properties:
+        tradeId:
+          type: string
+          format: uuid
+        itemId:
+          type: string
+          format: uuid
+        sellerId:
+          type: string
+          format: uuid
+        buyerId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          format: int32
+          minimum: 1
+        status:
+          type: string
+          enum:
+          - PendingSettlement
+          - Finalized
+          - Reversed
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+      - tradeId
+      - itemId
+      - sellerId
+      - buyerId
+      - quantity
+      - status
+      - updatedAt
+    PricePolicy:
+      type: object
+      properties:
+        templateId:
+          type: string
+          format: uuid
+        basePrice:
+          type: integer
+          format: int64
+          minimum: 1
+        referencePrice:
+          type: integer
+          format: int64
+          minimum: 1
+        bandBasisPoints:
+          type: integer
+          minimum: 0
+          maximum: 9999
+        minUnitPrice:
+          type: integer
+          format: int64
+          minimum: 1
+        maxUnitPrice:
+          type: integer
+          format: int64
+          minimum: 1
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+        asOf:
+          type: string
+          format: date-time
+      required:
+      - templateId
+      - basePrice
+      - referencePrice
+      - bandBasisPoints
+      - minUnitPrice
+      - maxUnitPrice
+      - version
+      - asOf
+    PricePolicyRequest:
+      type: object
+      properties:
+        basePrice:
+          type: integer
+          format: int64
+          minimum: 1
+        bandBasisPoints:
+          type: integer
+          minimum: 0
+          maximum: 9999
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 0
+          description: 0 khi tạo mới
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+      required:
+      - basePrice
+      - bandBasisPoints
+      - expectedVersion
+      - reason
+    PricePolicyPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PricePolicy'
+        page:
+          type: integer
+          format: int32
+          minimum: 1
+        pageSize:
+          type: integer
+          format: int32
+          minimum: 1
+        totalCount:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - items
+      - page
+      - pageSize
+      - totalCount
+    CreateListingRequest:
+      type: object
+      properties:
+        itemId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          format: int32
+          minimum: 1
+        unitPrice:
+          type: integer
+          format: int64
+          minimum: 1
+      required:
+      - itemId
+      - quantity
+      - unitPrice
+    Listing:
+      type: object
+      properties:
+        listingId:
+          type: string
+          format: uuid
+        sellerId:
+          type: string
+          format: uuid
+        itemId:
+          type: string
+          format: uuid
+        templateId:
+          type: string
+          format: uuid
+        itemName:
+          type: string
+          minLength: 1
+        category:
+          type: string
+          minLength: 1
+        rarity:
+          type: string
+          minLength: 1
+        quantity:
+          type: integer
+          format: int32
+          minimum: 1
+        unitPrice:
+          type: integer
+          format: int64
+          minimum: 1
+        grossGem:
+          type: integer
+          format: int64
+          minimum: 1
+        status:
+          type: string
+          enum:
+          - PendingLock
+          - Active
+          - Processing
+          - Sold
+          - Cancelled
+          - CreateFailed
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+      - listingId
+      - sellerId
+      - itemId
+      - templateId
+      - itemName
+      - category
+      - rarity
+      - quantity
+      - unitPrice
+      - grossGem
+      - status
+      - version
+      - createdAt
+      - updatedAt
+    ListingPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Listing'
+        page:
+          type: integer
+          format: int32
+          minimum: 1
+        pageSize:
+          type: integer
+          format: int32
+          minimum: 1
+        totalCount:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - items
+      - page
+      - pageSize
+      - totalCount
+    CancelListingResult:
+      type: object
+      properties:
+        listingId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - Cancelled
+        inventoryUnlockStatus:
+          type: string
+          enum:
+          - Pending
+          - Confirmed
+      required:
+      - listingId
+      - status
+      - inventoryUnlockStatus
+    PurchaseAccepted:
+      type: object
+      properties:
+        tradeId:
+          type: string
+          format: uuid
+        listingId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - HoldingFunds
+          - Transferring
+          - Settling
+          - Finalizing
+          - ReversingItem
+          - ReleasingFunds
+          - Completed
+          - Failed
+        grossGem:
+          type: integer
+          format: int64
+          minimum: 1
+        feeGem:
+          type: integer
+          format: int64
+          minimum: 0
+        sellerNetGem:
+          type: integer
+          format: int64
+          minimum: 0
+        statusUrl:
+          type: string
+          minLength: 1
+      required:
+      - tradeId
+      - listingId
+      - status
+      - grossGem
+      - feeGem
+      - sellerNetGem
+      - statusUrl
+    Trade:
+      type: object
+      properties:
+        tradeId:
+          type: string
+          format: uuid
+        listingId:
+          type: string
+          format: uuid
+        buyerId:
+          type: string
+          format: uuid
+        sellerId:
+          type: string
+          format: uuid
+        itemId:
+          type: string
+          format: uuid
+        templateId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          format: int32
+          minimum: 1
+        unitPrice:
+          type: integer
+          format: int64
+          minimum: 1
+        grossGem:
+          type: integer
+          format: int64
+          minimum: 1
+        feeGem:
+          type: integer
+          format: int64
+          minimum: 0
+        sellerNetGem:
+          type: integer
+          format: int64
+          minimum: 0
+        status:
+          type: string
+          enum:
+          - HoldingFunds
+          - Transferring
+          - Settling
+          - Finalizing
+          - ReversingItem
+          - ReleasingFunds
+          - Completed
+          - Failed
+        failureCode:
+          type:
+          - string
+          - 'null'
+          minLength: 1
+        requiresReview:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      required:
+      - tradeId
+      - listingId
+      - buyerId
+      - sellerId
+      - itemId
+      - templateId
+      - quantity
+      - unitPrice
+      - grossGem
+      - feeGem
+      - sellerNetGem
+      - status
+      - failureCode
+      - requiresReview
+      - createdAt
+      - updatedAt
+      - completedAt
+    TradePage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Trade'
+        page:
+          type: integer
+          format: int32
+          minimum: 1
+        pageSize:
+          type: integer
+          format: int32
+          minimum: 1
+        totalCount:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - items
+      - page
+      - pageSize
+      - totalCount
+    SagaStep:
+      type: object
+      properties:
+        step:
+          type: string
+          minLength: 1
+        outcome:
+          type: string
+          enum:
+          - Pending
+          - Succeeded
+          - Rejected
+          - Retrying
+          - Unknown
+        at:
+          type: string
+          format: date-time
+        errorCode:
+          type:
+          - string
+          - 'null'
+          minLength: 1
+      required:
+      - step
+      - outcome
+      - at
+      - errorCode
+    MarketTradeTrace:
+      type: object
+      properties:
+        trade:
+          $ref: '#/components/schemas/Trade'
+        correlationId:
+          type: string
+          format: uuid
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/SagaStep'
+      required:
+      - trade
+      - correlationId
+      - steps
+    MarketListingStats:
+      type: object
+      properties:
+        activeListingCount:
+          type: integer
+          format: int64
+          minimum: 0
+        asOf:
+          type: string
+          format: date-time
+      required:
+      - activeListingCount
+      - asOf
+    MarketStatistic:
+      type: object
+      properties:
+        day:
+          type: string
+          format: date
+        templateId:
+          type: string
+          format: uuid
+        tradeCount:
+          type: integer
+          format: int64
+          minimum: 0
+        volume:
+          type: integer
+          format: int64
+          minimum: 0
+          description: số lượng item
+        totalGrossGem:
+          type: integer
+          format: int64
+          minimum: 0
+        totalFeeGem:
+          type: integer
+          format: int64
+          minimum: 0
+        minUnitPrice:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          minimum: 0
+        maxUnitPrice:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          minimum: 0
+        referencePrice:
+          type: integer
+          format: int64
+          minimum: 1
+        asOf:
+          type: string
+          format: date-time
+      required:
+      - day
+      - templateId
+      - tradeCount
+      - volume
+      - totalGrossGem
+      - totalFeeGem
+      - minUnitPrice
+      - maxUnitPrice
+      - referencePrice
+      - asOf
+    MarketStatisticPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MarketStatistic'
+        page:
+          type: integer
+          format: int32
+          minimum: 1
+        pageSize:
+          type: integer
+          format: int32
+          minimum: 1
+        totalCount:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - items
+      - page
+      - pageSize
+      - totalCount
+    MarketOverview:
+      type: object
+      properties:
+        day:
+          type: string
+          format: date
+        tradeCount:
+          type: integer
+          format: int64
+          minimum: 0
+        volume:
+          type: integer
+          format: int64
+          minimum: 0
+        totalGrossGem:
+          type: integer
+          format: int64
+          minimum: 0
+        totalFeeGem:
+          type: integer
+          format: int64
+          minimum: 0
+        gemSupply:
+          anyOf:
+          - $ref: '#/components/schemas/WalletSupply'
+          - type: 'null'
+        activeListingCount:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          minimum: 0
+        partial:
+          type: boolean
+        unavailableSources:
+          type: array
+          items:
+            type: string
+            minLength: 1
+        asOf:
+          type: string
+          format: date-time
+      required:
+      - day
+      - tradeCount
+      - volume
+      - totalGrossGem
+      - totalFeeGem
+      - gemSupply
+      - activeListingCount
+      - partial
+      - unavailableSources
+      - asOf
+    SupportTradeTrace:
+      type: object
+      properties:
+        marketplace:
+          $ref: '#/components/schemas/MarketTradeTrace'
+        wallet:
+          anyOf:
+          - $ref: '#/components/schemas/WalletTradeTrace'
+          - type: 'null'
+        inventory:
+          anyOf:
+          - $ref: '#/components/schemas/ItemTransferTrace'
+          - type: 'null'
+        partial:
+          type: boolean
+        unavailableSources:
+          type: array
+          items:
+            type: string
+            minLength: 1
+      required:
+      - marketplace
+      - wallet
+      - inventory
+      - partial
+      - unavailableSources
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+          - Healthy
+          - Unhealthy
+      required:
+      - status

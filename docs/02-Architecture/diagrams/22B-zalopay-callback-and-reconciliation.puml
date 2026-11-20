@@ -1,0 +1,63 @@
+@startuml
+title Figure 22B - ZaloPay: Callback and Reconciliation
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+skinparam maxMessageSize 44
+skinparam ParticipantPadding 10
+skinparam BoxPadding 8
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam ArrowColor #64748B
+autonumber
+actor Player
+participant "API Gateway" as G #DDD6FE
+participant "Wallet.API" as W #DBEAFE
+database "WalletDb" as D #DCFCE7
+participant "ZaloPay\nSandbox" as Z #F1F5F9
+note over W,D
+    Continued from Figure 22A.
+    Same TopUpId and app_trans_id.
+end note
+
+== Phase 4 - Payment callback ==
+opt Callback received
+    Z -> G : POST /api/v1/wallet/zalopay/callback\n(data, mac, type)
+    G -> W : Forward (no Player JWT)
+    W -> W : Verify Key2 MAC and type;\nvalidate order, amount and IDs
+    alt Invalid MAC / unsupported type
+        W --> G : return_code = -1
+    else Valid MAC and matching payment
+        ref over W,D : Atomic idempotent settlement\nLock order; credit Gem + ledger + Paid\nOr detect exact duplicate
+        D --> W : Commit / duplicate / transient error
+        W --> G : return_code = 1 / 2 / 0
+    else Signed but conflicting data
+        W -> D : Record discrepancy; no credit
+        W --> G : return_code = 0; reconcile
+    end
+    G --> Z : HTTP 200 + return_code, return_message
+end
+
+== Phase 5 - Reconciliation ==
+opt Unresolved order / callback missed
+    W -> D : Read Pending order
+    W -> Z : POST /v2/query (MAC Key1)
+    Z --> W : Status + amount + zp_trans_id
+    alt Confirmed paid and matching
+        ref over W,D : Same atomic idempotent settlement
+    else Confirmed terminal failure
+        W -> D : Failed / Expired if not Paid
+    else Pending / unknown / mismatch
+        W -> D : Keep Pending; retry or flag review
+    end
+end
+
+== Phase 6 - Check top-up status ==
+Player -> G : GET /api/v1/wallet/top-ups/{topUpId}
+G -> W : Authorized owner request
+W -> D : Read order state
+D --> W : TopUpOrder
+W --> G : 200 OK
+G --> Player : Pending / Paid / Failed / Expired
+@enduml

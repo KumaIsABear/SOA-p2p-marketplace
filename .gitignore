@@ -1,0 +1,29 @@
+# .NET / C# / IDE
+bin/
+obj/
+.vs/
+.idea/
+*.user
+*.suo
+TestResults/
+*.trx
+
+# Secrets & Environment (chỉ commit .env.example)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+secrets.json
+
+# Backups & Local dumps
+*.bak
+*.dump
+*.sql.gz
+backups/
+
+# OS
+.DS_Store
+Thumbs.db

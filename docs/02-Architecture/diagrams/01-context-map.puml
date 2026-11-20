@@ -1,0 +1,35 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+left to right direction
+skinparam componentStyle rectangle
+package "Core Domain" {
+  component "Marketplace Context\nListing, Trade" as Market
+  component "Market Regulation Context\nPricePolicy, Analytics" as Regulation
+}
+package "Supporting Subdomains" {
+  component "Wallet Context" as Wallet
+  component "Inventory Context" as Inv
+  component "Customer Support Context" as CS
+}
+package "Generic Subdomains" {
+  component "Identity Context" as Auth
+  cloud "Google Identity" as Google
+  cloud "ZaloPay Sandbox" as Pay
+}
+Market --> Wallet : Hold / Settle / Release
+Market --> Inv : Lock / Transfer / Finalize
+Market --> Regulation : Read price snapshot
+Regulation ..> Market : Consumes TradeCompleted
+Market --> Auth : Check account status
+CS --> Auth : Restrict account
+CS --> Market : Trade trace
+CS --> Wallet : Ledger trace
+CS --> Inv : Transfer trace (by trade)
+Auth --> Google : OIDC adapter
+Wallet --> Pay : ZaloPay Payment Adapter
+note bottom of Market
+  Commands and events are published contracts.
+  No shared domain model across contexts.
+end note
+@enduml

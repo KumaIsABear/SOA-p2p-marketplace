@@ -1,0 +1,24 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+state PendingLock
+state Active
+state Processing
+state Sold
+state Cancelled
+state CreateFailed
+[*] --> PendingLock : Create request
+PendingLock --> Active : Items locked + commit
+PendingLock --> CreateFailed : confirmed rejection / compensated
+Active --> Processing : atomic purchase claim
+Active --> Cancelled : atomic cancel
+Processing --> Sold : settlement + item finalized
+Processing --> Active : compensation complete
+Sold --> [*]
+Cancelled --> [*]
+CreateFailed --> [*]
+note right of Processing
+  Timeout is not proof of failure.
+  Keep state until outcome is known.
+end note
+@enduml

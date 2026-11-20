@@ -1,0 +1,141 @@
+@startuml
+title Wallet Service - Entity Relationship Diagram
+
+top to bottom direction
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 13
+skinparam linetype ortho
+skinparam nodesep 50
+skinparam ranksep 60
+skinparam roundcorner 10
+skinparam ArrowColor #64748B
+
+skinparam entity {
+    BackgroundColor #DCFCE7
+    BorderColor #86C99C
+    FontColor #14532D
+}
+
+skinparam package {
+    BackgroundColor #F8FAFC
+    BorderColor #94A3B8
+}
+
+hide circle
+
+package "WalletDb - SQL Server" {
+
+    entity "Wallets" as Wallets {
+        * UserId : uuid <<PK>>
+        --
+        TotalBalance : long
+        HoldBalance : long
+        Version : long
+    }
+
+    entity "FundHolds" as FundHolds {
+        * TradeId : uuid <<PK>>
+        --
+        BuyerId : uuid <<FK>>
+        Amount : long
+        Status : string
+        CreatedAt : datetime
+        UpdatedAt : datetime
+    }
+
+    entity "WalletTransactions" as Transactions {
+        * EntryId : uuid <<PK>>
+        --
+        UserId : uuid <<FK>>
+        OperationKey : string <<UQ>>
+        TradeId : uuid?
+        TopUpId : uuid? <<FK>>
+        TotalDelta : long
+        HoldDelta : long
+        FeeGem : long?
+        Type : string
+        CreatedAt : datetime
+    }
+
+    entity "TopUpOrders" as TopUpOrders {
+        * TopUpId : uuid <<PK>>
+        --
+        UserId : uuid <<FK>>
+        Provider : string
+        AppTransId : string <<UQ>>
+        PaymentUrl : string?
+        ProviderTxnId : long? <<UQ>>
+        AmountVnd : long
+        GemAmount : long
+        Status : string
+        CreatedAt : datetime
+        PaidAt : datetime?
+    }
+
+    Wallets ||--o{ FundHolds : reserves
+    Wallets ||--o{ Transactions : records
+    Wallets ||--o{ TopUpOrders : creates
+
+    TopUpOrders |o--o{ Transactions : generates
+
+    FundHolds -[hidden]right-> Transactions
+    Transactions -[hidden]right-> TopUpOrders
+}
+
+note top of Wallets
+    AvailableBalance =
+    TotalBalance - HoldBalance
+
+    0 <= HoldBalance <= TotalBalance
+end note
+
+note bottom of FundHolds
+    Hold Status:
+    - Held
+    - Settled
+    - Released
+end note
+
+note bottom of Transactions
+    Transaction Types:
+    - TopUp
+    - Hold
+    - SettlementDebit
+    - SettlementCredit
+    - Release
+    - TaxBurn
+
+    OperationKey prevents
+    duplicate financial operations.
+end note
+
+note bottom of TopUpOrders
+    Payment Provider: ZALOPAY
+
+    AppTransId = app_trans_id
+    ProviderTxnId = zp_trans_id
+    app_user = UserId (canonical string)
+    PaymentUrl may be null while Pending.
+
+    Order Status:
+    - Pending
+    - Paid
+    - Failed
+    - Expired
+
+    ProviderTxnId uses a filtered
+    unique index (IS NOT NULL).
+end note
+
+legend bottom
+    |= Symbol |= Description |
+    | PK | Primary Key |
+    | FK | Foreign Key |
+    | UQ | Unique Constraint |
+    | ? | Nullable |
+endlegend
+
+@enduml

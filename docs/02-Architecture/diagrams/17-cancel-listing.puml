@@ -1,0 +1,29 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+actor Seller
+participant Marketplace as M
+database Redis as R
+database MarketplaceWriteDb as DB
+queue RabbitMQ as MQ
+participant Inventory as I
+participant "CQRS Worker" as Q
+Seller -> M : Cancel own listing (via Gateway)
+M -> R : Try acquire listing lock
+alt lock busy
+ M --> Seller : Conflict
+else acquired
+ M -> DB : conditional Active -> Cancelled + outbox
+ alt claim won
+  M -> R : release own lock token
+  M --> Seller : Cancelled (unlock pending)
+  DB -> MQ : UnlockItemCommand + ListingCancelledEvent (dispatcher)
+  MQ -> I : UnlockItemCommand (inventory-commands)
+  MQ -> Q : ListingCancelledEvent (marketplace-projection)
+  I -> I : local unlock / dedupe
+ else not Active or not owner
+  M -> R : release own lock token
+  M --> Seller : Reject
+ end
+end
+@enduml

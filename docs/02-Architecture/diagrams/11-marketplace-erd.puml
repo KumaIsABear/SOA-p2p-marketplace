@@ -1,0 +1,67 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+hide circle
+skinparam linetype ortho
+package "MarketplaceWriteDb" {
+  entity Listings {
+    * ListingId : uuid <<PK>>
+    --
+    SellerId : uuid
+    ItemId : uuid
+    TemplateId : uuid
+    ItemName : string
+    Category : string
+    Rarity : string
+    Quantity : int
+    UnitPrice : long
+    GrossGem : long
+    PolicyVersion : long
+    Status : string
+    Version : long
+    CreatedAt : datetime
+    UpdatedAt : datetime
+  }
+  entity Trade_Histories {
+    * TradeId : uuid <<PK>>
+    --
+    ListingId : uuid <<FK>>
+    BuyerId : uuid
+    SellerId : uuid
+    ItemId : uuid
+    TemplateId : uuid
+    Quantity : int
+    UnitPrice : long
+    GrossGem : long
+    FeeGem : long
+    SellerNetGem : long
+    Status : string
+    FailureCode : string?
+    RequiresReview : bool
+    IdempotencyKey : string
+    CreatedAt : datetime
+    UpdatedAt : datetime
+    CompletedAt : datetime?
+  }
+  entity Saga_States {
+    * CorrelationId : uuid <<PK>>
+    --
+    TradeId : uuid <<FK,UQ>>
+    CurrentState : string
+    UpdatedAt : datetime
+    FailureReason : string?
+  }
+  entity Saga_Steps {
+    * StepId : uuid <<PK>>
+    --
+    TradeId : uuid <<FK>>
+    Step : string
+    Outcome : string
+    ErrorCode : string?
+    At : datetime
+  }
+}
+Listings ||--o{ Trade_Histories
+Trade_Histories ||--o| Saga_States
+Trade_Histories ||--o{ Saga_Steps
+@enduml

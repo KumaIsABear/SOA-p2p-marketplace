@@ -1,0 +1,23 @@
+# Performance, Concurrency & Reliability Testing
+
+version: 1.0.0 | Design baseline — NOT RUN
+
+## 1. Targets from NFR (local, not SLA)
+| Case | Measurement | Target |
+|---|---|---|
+| CC-01 | 100 simultaneous distinct funded buyers, same listing | Exactly one Completed when healthy; remaining conflicts; zero duplicate effects |
+| CC-02/03/04 | Overspend, TTL and cancel race | No negative balances, no double claim, no invalid unlock |
+| PF-01 | Warmed GET catalog mean | <=100 ms (50 ms stretch); p95 reported |
+| PF-02 | Redis price read mean | <5 ms; actual isolated cache read, not API latency |
+| PF-03 | SQL event commit → Mongo projection apply | Target 1–2 s healthy; report mean/p95/max, no SLA |
+
+## 2. Setup and measurement protocol (proposed reproducible parameters)
+- Same candidate release, same host, no public traffic, local gateway. Record CPU/RAM, OS, Docker limits, images, data sizes, indexes, background jobs, warmup, timestamps, sample count, failures/timeouts. Avoid public ngrok/provider for load; no load to Google/ZaloPay. Prefer isolated test data and dedicated Compose project. If thresholds differ in frozen baseline, update targets explicitly.
+- PF-01: seed 1,000 active listings across templates with fixed known distribution (if capacity prevents, use smaller documented dataset); confirm Mongo indexes/read path. Warm 20 calls; then 200 measured GETs (pageSize=20, representative filter/sort; sequential baseline, optionally separate 10 concurrent clients series). Repeat 3 runs if time; report each, no cherry-picking. Record status, response latency, end-to-end wall time. Mean/p95 calculated over successful responses; report error count/timeouts separately and do not pass if errors invalidate sample. Do not mix concurrency profiles. Verify query reads Mongo, not SQL catalog.
+- PF-02: 20 warm reads then 200 timed price-key reads on service-to-Redis path, same key size/hit ratio, timer around actual Redis get only; record miss rate separately. If no instrumentation, mark measurement Blocked rather than infer from MKT-01 latency. PF-03: 30 independent listing changes, unique IDs/versions, UTC committedAt & projection appliedAt from same clock domain; lag=apply−commit (nonnegative; synchronize clock). Include unapplied events as missing/timeouts, not zero. Report % within 2s, target mean <=2s for planning (docs say 1–2s, no lower bound); p95/max descriptive. Document actual criterion before run.
+
+## 3. Concurrency runner design
+Postman sequential runner alone does not prove concurrency. Use local k6/custom async HTTP runner with barrier; actual implementation goes in tests/ later. Prepare 100 separate seeded Player accounts, each available >= gross with empty slot, obtain JWT before barrier; one fresh Active listing, distinct key per buyer. Record launch skew, request timestamp, status/code, listingId, tradeId. Release requests together; wait for responses, poll every accepted trade by authorized owner until terminal/timeout. Verify on authoritative snapshots: only 1 accepted distinct claim when healthy, at most one Completed always; 99 conflict responses expected under healthy controlled run, not classify 429/503/timeout as conflict. If rate limit prevents exercise, document test-only adjustment/config and rerun; never bypass authorization or weaken SQL guard. Check buyer/seller ledger, item instance unique owner, supply fee once, non-winners unchanged, no pending holds after convergence. Repeat on fresh listing 3 times if feasible. Same buyer/different listings case requires separate keys—assert only one settles if funds insufficient for both. Race cancel/purchase repeat 10 runs; count winners, ensure no invalid state. TTL case uses test barrier past configured lock TTL or reacquisition after release; observe compare-delete safety. Record actual parameters if fewer runs, do not imply 100-client run occurred.
+
+## 4. Report raw observations
+Per HTTP attempt: runId, caseId, request index, actor alias, startUtc, durationMs, status/code, correlationId, tradeId, outcome (redacted). Per async observation: runId, listing/trade alias, version, committedAtUtc, appliedAtUtc, lagMs, timeout. Mean=sum duration/count; p95 nearest-rank (sort, ceil(0.95*n)th); errors=count of unexpected failures / total attempts. Expected conflict count in race separate from unexpected errors. Preserve raw CSV/JSON and commit/config. Include Docker stats + Prometheus/Grafana screenshots with time window; Prometheus `up` is scrape availability not business success; metrics cannot replace state/ledger evidence. Mark sample sizes and unmeasured targets explicitly. See Test-Report.md.

@@ -1,0 +1,29 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+skinparam componentStyle rectangle
+package "Marketplace.API (one deployable)" {
+ component "Command API" as Cmd
+ component "Command Handlers" as Handler
+ component "Trade Saga / State Machine" as Saga
+ component "Outbox Dispatcher" as Outbox
+ component "Query API" as Query
+ component "CQRS Projection Worker" as Worker
+ component "Trade Trace / Status API" as Trace
+}
+queue RabbitMQ as MQ
+database MarketplaceWriteDb as W
+database MarketplaceReadDb as R
+database Redis
+Cmd --> Handler
+Handler --> Redis
+Handler --> W : local state + outbox
+Saga --> W : persisted state + outbox
+Outbox --> W : pending messages
+Outbox --> MQ : publish
+MQ --> Saga : replies
+MQ --> Worker : listing events
+Worker --> R : versioned projection
+Query --> R : browse / filter
+Trace --> W : trade status / history
+@enduml

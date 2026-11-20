@@ -1,0 +1,25 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+actor CS
+participant "Admin.API" as A
+participant "Marketplace.API" as M
+participant "Wallet.API" as W
+participant "Inventory.API" as I
+participant "Auth.API" as U
+database AdminAnalyticsDb as D
+CS -> A : Trade trace (TradeId)
+A -> M : Query trade / saga steps
+M --> A : Trade / CorrelationId / steps
+A -> W : Query ledger for TradeId
+W --> A : Hold / settle / refund
+A -> I : Query item transfer for TradeId
+I --> A : Item operation history
+A --> CS : Combined trace (partial errors labeled)
+CS -> A : Restrict account (reason)
+A -> D : Audit request
+A -> U : Internal status change (operation ID)
+U --> A : Updated / rejected
+A -> D : Record outcome
+A --> CS : Status result
+@enduml

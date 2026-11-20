@@ -1,0 +1,47 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+actor Buyer
+participant Marketplace as M
+participant Auth as A
+database Redis as R
+database MarketplaceWriteDb as DB
+queue RabbitMQ as MQ
+participant Wallet as W
+participant Inventory as I
+Buyer -> M : Purchase listing (via Gateway)
+M -> A : Check permission
+A --> M : Allowed
+M -> R : TryAcquire(token)
+R --> M : Granted
+M -> DB : Atomic claim, Trade + Saga + outbox
+M -> R : release token after durable claim
+M --> Buyer : 202 Accepted + TradeId
+DB -> MQ : HoldBuyerFundsCommand (dispatcher)
+MQ -> W : HoldBuyerFundsCommand
+W -> W : Reserve Gem + ledger + outbox
+W -> MQ : BuyerFundsHeldEvent
+MQ -> M : BuyerFundsHeldEvent
+M -> DB : Transferring + outbox
+DB -> MQ : TransferItemCommand
+MQ -> I : Transfer item (reserve capacity)
+I -> I : Local transfer to PendingSettlement
+I -> MQ : ItemTransferredEvent
+MQ -> M : ItemTransferredEvent
+M -> DB : Settling + outbox
+DB -> MQ : SettleTradeCommand
+MQ -> W : SettleTradeCommand
+W -> W : Debit hold, credit seller net, burn fee
+W -> MQ : TradeSettledEvent
+MQ -> M : TradeSettledEvent
+M -> DB : Finalizing + outbox
+DB -> MQ : FinalizeItemTransferCommand
+MQ -> I : FinalizeItemTransferCommand
+I -> I : Mark item Available; release seller slot
+I -> MQ : ItemTransferFinalizedEvent
+MQ -> M : ItemTransferFinalizedEvent
+M -> DB : Sold + Completed + outbox
+DB -> MQ : TradeCompletedEvent
+Buyer -> M : GET trade status
+M --> Buyer : Completed
+@enduml

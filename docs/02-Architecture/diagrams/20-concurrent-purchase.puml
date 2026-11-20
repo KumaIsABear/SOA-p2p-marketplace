@@ -1,0 +1,28 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+actor BuyerA as A
+actor BuyerB as B
+participant "Marketplace instance A" as M1
+participant "Marketplace instance B" as M2
+database Redis as R
+database MarketplaceWriteDb as DB
+A -> M1 : Purchase same ListingId
+B -> M2 : Purchase same ListingId
+M1 -> R : SET NX PX tokenA
+R --> M1 : OK
+M2 -> R : SET NX PX tokenB
+R --> M2 : Lock busy
+M2 --> B : 409 Conflict
+M1 -> DB : UPDATE WHERE Status=Active
+DB --> M1 : 1 row + Trade/Saga committed
+M1 --> A : 202 Accepted
+... lock released or expires ...
+B -> M2 : Retry purchase
+M2 -> R : Acquire tokenB
+R --> M2 : OK
+M2 -> DB : UPDATE WHERE Status=Active
+DB --> M2 : 0 rows (Processing/Sold)
+M2 -> R : Compare-delete tokenB
+M2 --> B : 409 Conflict
+@enduml

@@ -1,0 +1,869 @@
+IN-GAME P2P MARKETPLACE — API & INTEGRATION CONTRACTS
+Version: 1.0.0 | Frozen baseline for group review / freeze
+Suggested repository path: docs/03-Contracts/API-Contracts.txt
+Language: Vietnamese; code, DTO and protocol names in English.
+
+01. PURPOSE AND SCOPE
+=====================
+Nguồn ưu tiên: a(1).txt (MVP), SOA - Analyst(1).md (29 FR còn lại), file Idea ban đầu, 02-Architecture (DDD, System Architecture, Database Design, Design Patterns, Sequence Diagrams, Deployment), cập nhật Diagram 09/22/26 và quyết định mới: ZaloPay Sandbox + Google Sign-In. Các tên endpoint, DTO và quy tắc chưa được chốt trong tài liệu gốc là đề xuất contract v0.1, không phải code đã triển khai.
+Giữ 5 services + YARP, 5 SQL DB logic + MongoDB. Không có Payment.API riêng. Gold chỉ là bối cảnh; chỉ Gem được xử lý; không OTP, ticket, anti-fraud tự động, đấu giá, buy order, GM bơm/thu mua hàng, frontend hoàn chỉnh, cash-out hoặc tiền thật.
+HTTP/OpenAPI mô tả request/response. RabbitMQ/MassTransit dùng message contracts riêng, không tạo REST endpoint mua-bán nội bộ thay Saga. File marketplace-openapi.yaml đi kèm import được vào công cụ hỗ trợ OAS 3.1; dùng bản text này cho quy tắc lõi và messaging.
+
+02. COMMON API STANDARDS
+========================
+Base URL local: http://localhost:8080. Public demo: HTTPS ngrok URL được cấp thực tế (không hardcode).
+Public resource paths: /api/v1/{service}/...; internal: /internal/v1/... (private Docker DNS). Đây là chuẩn mới thay tên /internal/... sơ bộ; update diagrams nếu có path cũ.
+Serialization: JSON UTF-8 camelCase cho API, UTC RFC3339 timestamps (vd 2026-11-19T12:00:00Z), UUID canonical, money/quantity integer. ZaloPay giữ nguyên snake_case. JSON int64 cho Gem/VND; client JS phải dùng safe-integer range hoặc parser hỗ trợ int64, không dùng float tính tiền. C# long, checked arithmetic. Role/enum strings đúng casing trong schema. Dữ liệu nullable có thể trả null; không tự bỏ field bắt buộc. Request field ngoài schema reject/ignore nhất quán theo team; không bind trực tiếp entity.
+Success: trả DTO trực tiếp, không dùng wrapper success/data; collection dùng {items, page, pageSize, totalCount}; page 1-based, mặc định 20, tối đa 100; from/to timestamp [from,to); ngày analytics from/to [from,to), tối đa 31 ngày mặc định; sort ổn định với ID tie-break. Trim q <=100, reason <=500, validate enum/UUID, minPrice<=maxPrice. 204 không body; 201/202 kèm Location khi có resource/status URI. 202 chỉ khi intent/operation đã persist, không đồng nghĩa thành công.
+Headers: Authorization: Bearer <accessToken>; Content-Type: application/json (body); Accept: application/json; X-Correlation-ID UUID optional, generate nếu absent; echo correlation ID trên response và propagate internal. Idempotency-Key required ở những endpoint có ghi rõ; 1..128 ký tự opaque, khuyến nghị UUID. Scope key theo actor + operation + resource/body fingerprint; replay exact returns existing resource/result, khác payload => 409; không xử lý side effect lần hai. Persist key cùng local state, không chỉ Redis. Không tự sinh key mới khi retry timeout; không dùng idempotency key làm auth token.
+Error format: application/problem+json (ProblemDetails). Ví dụ: {"type":"about:blank","title":"Conflict","status":409,"detail":"Listing is not active.","instance":"/api/v1/marketplace/listings/11111111-1111-4111-8111-111111111111/purchase","code":"LISTING_NOT_ACTIVE","traceId":"trace-example"}. Không lộ stack, database, token. 400 validation; 401 token/credentials; 403 role/status; 404 missing hoặc không sở hữu resource; 409 state/idempotency conflict; 422 rule giá/giá trị; 429 throttle; 500 lỗi ngoài dự kiến; 502 provider rejection; 503 dependency lỗi/unknown trước durable acceptance. Callback ZaloPay là ngoại lệ: provider acknowledgement JSON.
+
+03. AUTHORIZATION / SERVICE BOUNDARIES
+=====================================
+Auth phát internal JWT sub=userId, role=Player|GM|CS, iss, aud, exp, iat, jti; role từ AuthDb. TTL đề xuất access 15 phút / refresh 7 ngày; rotate refresh hash, revoke logout; không log token. GM/CS preseed; Google JIT user luôn Player. /auth/login dành seeded password accounts; cần thêm PasswordHash nullable và DisplayName nếu ERD AuthDb chưa có (hoặc thống nhất Google-only rồi bỏ login endpoint). Password hash chuẩn ASP.NET Core Identity/PasswordHasher, không plaintext. Không auto-link Google account bằng email; pre-link bằng verified subject qua admin seed; email conflict cần xử lý thủ công.
+Gateway xác minh JWT và policy cho public protected routes; kiểm tra account status qua Auth internal (fail closed khi không xác minh được), tránh vòng lặp khi gọi Auth public login; Auth xử lý ban ở login/refresh/me. Services cũng verify JWT signature/iss/aud/exp và quyền ownership; không tin X-User-Id/role từ client. Banned bị chặn toàn bộ protected routes; TradeRestricted chặn create/purchase mới, vẫn xem, hủy listing của mình, nạp Gem theo phương án này; Saga đã accept vẫn chạy tới kết quả. Không hủy Saga khi JWT hết hạn. Buyer/Seller là vai trò trong nghiệp vụ, không có role JWT riêng.
+Internal calls: private network + X-Service-Key riêng từng caller, mapping caller/scopes trên service đích; constant-time compare, không forward key client, không public internal routes, rotate secret và local TLS nếu có; MVP HTTP trong Docker, production cần mTLS/service identity. Service key và JWT không phải một loại credential. Auth status routes chỉ caller được phép; Admin chỉ CS có thể gọi moderation; Seeder credential riêng. Không sử dụng shared universal key. RabbitMQ account credentials, queue/exchange ACL riêng khi khả thi.
+Gateway allowlist theo method/path ở danh mục dưới, không wildcard /internal. /auth/login, /auth/google, /auth/refresh, /auth/logout và /wallet/zalopay/callback không require access JWT (logout dùng refresh token, callback MAC). Rate limit login/topup/purchase; không dùng rate limit người chơi cho provider callback. /metrics, /health/live, /health/ready, Swagger nội bộ không public qua ngrok. Public API docs có thể xem localhost.
+Internal service DNS: http://auth-api:8080, wallet-api:8080, inventory-api:8080, marketplace-api:8080, admin-api:8080. Gateway route không đổi prefix; service nhận đúng path. Tất cả ports đề xuất, cập nhật theo compose. Ngrok chỉ forward allowlist gateway.
+
+04. REST ENDPOINT SPECIFICATIONS (OPENAPI BASELINE)
+===================================================
+Ký hiệu body — là không có request body; DTO được định nghĩa ở mục 05. Access Service:* là internal credential, không phải JWT role. Điểm quan trọng: API IDs dưới đây là IDs mới, FR IDs vẫn giữ gốc (AUTH-03 API != FR-AUTH-03 OTP đã cắt).
+
+AUTH.API
+-------------------------------------------------------
+AUTH-01 | POST /api/v1/auth/login
+  FR: AUTH-01 | Access: Anonymous
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: LoginRequest
+  Success: 200:TokenResponse
+  Errors: 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR; 401: INVALID_CREDENTIALS; 403: ACCOUNT_BANNED; 429: RATE_LIMITED
+  Rules: Đăng nhập bằng mật khẩu cho tài khoản đã seed; không public register.
+
+AUTH-02 | POST /api/v1/auth/google
+  FR: AUTH-01 + Google | Access: Anonymous
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: GoogleLoginRequest
+  Success: 200:TokenResponse
+  Errors: 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR; 401: INVALID_GOOGLE_TOKEN; 403: ACCOUNT_BANNED; 409: IDENTITY_CONFLICT; 429: RATE_LIMITED
+  Rules: Xác minh Google ID token, lấy subject; tạo Player nếu chưa có. Không tự gán GM/CS hoặc liên kết theo email.
+
+AUTH-03 | POST /api/v1/auth/refresh
+  FR: AUTH-02 | Access: Anonymous
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: RefreshRequest
+  Success: 200:TokenResponse
+  Errors: 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR; 401: INVALID_REFRESH_TOKEN; 403: ACCOUNT_BANNED; 429: RATE_LIMITED
+  Rules: Rotate refresh token atomically; chỉ hash lưu DB, token cũ revoked.
+
+AUTH-04 | POST /api/v1/auth/logout
+  FR: AUTH-02 | Access: RefreshToken
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: RefreshRequest
+  Success: 204:-
+  Errors: 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR
+  Rules: Revoke refresh token nếu tồn tại; trả 204 cả khi đã revoke/không tồn tại. Access token hết hạn tự nhiên; ban check vẫn áp dụng.
+
+AUTH-05 | GET /api/v1/auth/me
+  FR: AUTH-01 | Access: Player|GM|CS
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:User
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE
+  Rules: Trả user theo JWT sub; không nhận userId từ client.
+
+AUTH-I01 | GET /internal/v1/auth/users/{userId}/status
+  FR: AUTH-04 | Access: Service:gateway,marketplace,admin
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:AccessStatus
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 404: USER_NOT_FOUND
+  Rules: Nguồn chuẩn status + role. Gateway fail closed nếu Auth lỗi; Marketplace kiểm lại trước lệnh thay đổi.
+
+AUTH-I02 | PATCH /internal/v1/auth/users/{userId}/status
+  FR: CS-02,AUTH-04 | Access: Service:admin
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: InternalModerationRequest
+  Success: 200:AccessStatus
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR; 404: USER_NOT_FOUND; 409: IDEMPOTENCY_CONFLICT, INVALID_ACCOUNT_TARGET
+  Rules: Chỉ sửa tài khoản Player (nhắm GM/CS trả 409 INVALID_ACCOUNT_TARGET); operationId idempotent, không cấp role, revoke refresh nếu Banned.
+
+WALLET.API
+-------------------------------------------------------
+WAL-01 | GET /api/v1/wallet/balance
+  FR: WAL-01 | Access: Player
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:Balance
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE
+  Rules: Ví theo sub; khởi tạo ví rỗng idempotent khi cần.
+
+WAL-02 | GET /api/v1/wallet/transactions
+  FR: WAL-01,QRY-04 | Access: Player
+  Headers: X-Correlation-ID (optional)
+  Query: page:posint;pageSize:posint;type:enum(TopUp|Hold|SettlementDebit|SettlementCredit|Release|TaxBurn);tradeId:uuid;from:dt;to:dt
+  Request: —
+  Success: 200:WalletTransactionPage
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR
+  Rules: Ledger cá nhân, mới nhất trước.
+
+WAL-03 | GET /api/v1/wallet/top-up-packages
+  FR: WAL-02 | Access: Player
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:TopUpPackages
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE
+  Rules: Gói nạp từ cấu hình server; không nhận tỷ giá client.
+
+WAL-04 | POST /api/v1/wallet/top-ups
+  FR: WAL-02 | Access: Player
+  Headers: Idempotency-Key (required); X-Correlation-ID (optional)
+  Query: —
+  Request: CreateTopUpRequest
+  Success: 201:TopUpOrder,202:TopUpOrder
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR; 404: PACKAGE_NOT_FOUND; 409: IDEMPOTENCY_CONFLICT; 502: PAYMENT_CREATE_REJECTED
+  Rules: 201 khi nhận URL; 202 nếu đã lưu Pending nhưng kết quả create chưa rõ, không tạo đơn mới mù. Location trỏ order. TradeRestricted vẫn được xem/nạp theo quyết định đề xuất.
+
+WAL-05 | GET /api/v1/wallet/top-ups/{topUpId}
+  FR: WAL-02,WAL-03 | Access: Player
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:TopUpOrder
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 404: TOPUP_NOT_FOUND
+  Rules: SQL authoritative, chỉ chủ đơn; query ZaloPay do job, không gọi provider mỗi lần poll.
+
+WAL-06 | POST /api/v1/wallet/zalopay/callback
+  FR: WAL-03 | Access: ZaloPayMAC
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: ZaloPayCallbackRequest
+  Success: 200:ZaloPayCallbackResponse
+  Errors: 400: VALIDATION_ERROR
+  Rules: Body provider-specific; verify MAC Key2 trên nguyên chuỗi data; local tx cộng ví, ledger và Paid; không cần JWT. 200 + mã provider kể cả invalid MAC/duplicate/retry; 400 chỉ khi HTTP body không parse được.
+
+WAL-I01 | GET /internal/v1/wallet/trades/{tradeId}/trace
+  FR: CS-01,WAL-04,WAL-05,WAL-06 | Access: Service:admin,marketplace
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:WalletTradeTrace
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE
+  Rules: Trả hold nullable và ledger [] nếu bước chưa chạy; trạng thái có thể dùng để đối soát Saga.
+
+WAL-I02 | GET /internal/v1/wallet/supply
+  FR: GM-03 | Access: Service:admin
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:WalletSupply
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE
+  Rules: Tổng Gem hiện có trong ví, gồm held; dùng SQL aggregate có cache ngắn nếu cần; khác tổng volume giao dịch.
+
+
+INVENTORY.API
+-------------------------------------------------------
+INV-01 | GET /api/v1/inventory/items
+  FR: INV-01 | Access: Player
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:InventoryView
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE
+  Rules: Kho của sub, bao gồm Locked/PendingSettlement; lazy create capacity mặc định. MVP kho nhỏ, không cần phân trang.
+
+INV-I01 | POST /internal/v1/inventory/items
+  FR: INV-02 | Access: Service:seeder
+  Headers: Idempotency-Key (required); X-Correlation-ID (optional)
+  Query: —
+  Request: GrantItemRequest
+  Success: 201:InventoryItem
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR; 404: TEMPLATE_NOT_FOUND; 409: INVENTORY_FULL, IDEMPOTENCY_CONFLICT
+  Rules: Chỉ seeder nội bộ, template từ dữ liệu seed. Quy tắc MVP quantity=1 hoặc toàn stack; một request tạo một item/stack.
+
+INV-I02 | GET /internal/v1/inventory/items/{itemId}
+  FR: INV-03 | Access: Service:marketplace
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:InventoryItem
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 404: ITEM_NOT_FOUND
+  Rules: Đọc metadata authoritative trước khi validate giá; lock vẫn phải kiểm lại owner, template, quantity, tradable.
+
+INV-I03 | POST /internal/v1/inventory/lock
+  FR: INV-03 | Access: Service:marketplace
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: LockItemRequest
+  Success: 200:LockItemResult
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR; 404: ITEM_NOT_FOUND; 409: ITEM_NOT_OWNED, ITEM_NOT_TRADABLE, ITEM_LOCKED, QUANTITY_MISMATCH, IDEMPOTENCY_CONFLICT
+  Rules: Atomic lock theo listingId; replay cùng payload trả trạng thái lock cũ; lock đã release không được tái tạo bằng key cũ.
+
+INV-I04 | POST /internal/v1/inventory/locks/{listingId}/unlock
+  FR: INV-04 | Access: Service:marketplace
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: UnlockItemRequest
+  Success: 200:ItemLockStatus
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 409: ITEM_LOCK_MISMATCH, TRANSFER_PENDING
+  Rules: Dùng cho bồi hoàn create lỗi xác định; release đúng listingId; idempotent, tombstone chống lock muộn.
+
+INV-I05 | GET /internal/v1/inventory/locks/{listingId}
+  FR: INV-03,INV-04 | Access: Service:marketplace
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:ItemLockStatus
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE
+  Rules: NotFound nếu chưa có record; không suy ra an toàn khi request lock cũ vẫn có thể đang chạy.
+
+INV-I06 | GET /internal/v1/inventory/trades/{tradeId}/trace
+  FR: INV-05,CS-01 | Access: Service:admin,marketplace
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:ItemTransferTrace
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 404: TRANSFER_NOT_FOUND
+  Rules: 404 là chưa có transfer record, không chứng minh command đang bay sẽ không commit.
+
+
+MARKETPLACE.API
+-------------------------------------------------------
+MKT-01 | POST /api/v1/marketplace/listings
+  FR: MKT-01,MKT-02 | Access: Player
+  Headers: Idempotency-Key (required); X-Correlation-ID (optional)
+  Query: —
+  Request: CreateListingRequest
+  Success: 201:Listing,202:Listing
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED, TRADE_RESTRICTED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE, PRICE_POLICY_UNAVAILABLE; 400: VALIDATION_ERROR; 404: ITEM_NOT_FOUND; 409: ITEM_LOCKED, ITEM_NOT_OWNED, ITEM_NOT_TRADABLE, QUANTITY_MISMATCH, IDEMPOTENCY_CONFLICT; 422: PRICE_OUT_OF_BOUNDS
+  Rules: Validate owner và price snapshot; persist PendingLock, lock REST, commit Active+outbox. 202 nếu đã persist nhưng chưa rõ lock/activation; poll listing theo Location. Không tin sellerId/template/giá tham chiếu từ client.
+
+MKT-02 | DELETE /api/v1/marketplace/listings/{listingId}
+  FR: MKT-03 | Access: Player
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:CancelListingResult
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 404: LISTING_NOT_FOUND; 409: LISTING_BUSY, LISTING_NOT_ACTIVE
+  Rules: Chỉ seller; TradeRestricted được hủy; atomic Active->Cancelled + event; replay Cancelled trả 200. Giải phóng item eventual.
+
+MKT-03 | POST /api/v1/marketplace/listings/{listingId}/purchase
+  FR: MKT-04,MKT-05 | Access: Player
+  Headers: Idempotency-Key (required); X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 202:PurchaseAccepted
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED, TRADE_RESTRICTED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR; 404: LISTING_NOT_FOUND; 409: LISTING_BUSY, LISTING_NOT_ACTIVE, SELF_PURCHASE, IDEMPOTENCY_CONFLICT
+  Rules: Không request body; full listing. Redis lock rồi SQL atomic claim + Trade/Saga/outbox. Trả 202 chỉ khi commit; insufficient funds/full inventory báo ở GET trade. Replay same key kể cả trade đã terminal trả tradeId cũ và trạng thái hiện tại.
+
+MKT-04 | GET /api/v1/marketplace/listings
+  FR: QRY-02 | Access: Player
+  Headers: X-Correlation-ID (optional)
+  Query: q:str;category:str;rarity:str;minPrice:gem;maxPrice:gem;sort:enum(priceAsc|priceDesc|newest);page:posint;pageSize:posint
+  Request: —
+  Success: 200:ListingPage
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR
+  Rules: MongoDB chỉ Active; eventual consistency; stable tie-break listingId.
+
+MKT-05 | GET /api/v1/marketplace/listings/{listingId}
+  FR: MKT-02,QRY-02 | Access: Player
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:Listing
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 404: LISTING_NOT_FOUND
+  Rules: SQL snapshot cho detail/poll; non-owner chỉ xem Active, seller xem mọi trạng thái.
+
+MKT-06 | GET /api/v1/marketplace/my-listings
+  FR: QRY-03 | Access: Player
+  Headers: X-Correlation-ID (optional)
+  Query: status:enum(PendingLock|Active|Processing|Sold|Cancelled|CreateFailed);page:posint;pageSize:posint
+  Request: —
+  Success: 200:ListingPage
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR
+  Rules: SQL authoritative cho seller. Default Active; status filter.
+
+MKT-07 | GET /api/v1/marketplace/history
+  FR: QRY-04 | Access: Player
+  Headers: X-Correlation-ID (optional)
+  Query: side:enum(buy|sell|all);status:enum(HoldingFunds|Transferring|Settling|Finalizing|ReversingItem|ReleasingFunds|Completed|Failed);page:posint;pageSize:posint;from:dt;to:dt
+  Request: —
+  Success: 200:TradePage
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR
+  Rules: SQL lịch sử buyer/seller; mặc định Completed, cho phép lọc status. Không join WalletDb.
+
+MKT-08 | GET /api/v1/marketplace/trades/{tradeId}
+  FR: MKT-05,QRY-04 | Access: Player
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:Trade
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 404: TRADE_NOT_FOUND
+  Rules: SQL trạng thái Saga; chỉ buyer hoặc seller; không dùng Mongo; failureCode khi Failed, requiresReview khi không rõ kết quả.
+
+MKT-I01 | GET /internal/v1/marketplace/trades/{tradeId}/trace
+  FR: CS-01 | Access: Service:admin
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:MarketTradeTrace
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 404: TRADE_NOT_FOUND
+  Rules: Trade, correlation và saga steps từ MarketplaceWriteDb.
+
+MKT-I02 | GET /internal/v1/marketplace/trades
+  FR: CS-01 | Access: Service:admin
+  Headers: X-Correlation-ID (optional)
+  Query: [required] userId:uuid;status:enum(HoldingFunds|Transferring|Settling|Finalizing|ReversingItem|ReleasingFunds|Completed|Failed);page:posint;pageSize:posint;from:dt;to:dt
+  Request: —
+  Success: 200:TradePage
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR
+  Rules: Tìm theo userId (buyer/seller), không query chéo DB.
+
+MKT-I03 | GET /internal/v1/marketplace/stats
+  FR: GM-03 | Access: Service:admin
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:MarketListingStats
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE
+  Rules: Đếm listing Active trên SQL; phục vụ dashboard tổng hợp, không phải Mongo authoritative.
+
+
+ADMIN.API
+-------------------------------------------------------
+ADM-01 | GET /api/v1/admin/analytics
+  FR: GM-01,GM-02,GM-03 | Access: GM
+  Headers: X-Correlation-ID (optional)
+  Query: day:date
+  Request: —
+  Success: 200:MarketOverview
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE
+  Rules: Tổng hợp ngày theo Redis/SQL bền vững, thêm supply và active count từ internal REST; khi source lỗi trả partial=true/null, không giả định 0.
+
+ADM-02 | GET /api/v1/admin/analytics/history
+  FR: GM-02,GM-03 | Access: GM
+  Headers: X-Correlation-ID (optional)
+  Query: templateId:uuid;[required] from:date;[required] to:date;page:posint;pageSize:posint
+  Request: —
+  Success: 200:MarketStatisticPage
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR
+  Rules: Theo ngày và template; ngày hiện tại dùng cache, ngày cũ SQL.
+
+ADM-03 | GET /api/v1/admin/price-policies
+  FR: GM-04 | Access: GM
+  Headers: X-Correlation-ID (optional)
+  Query: page:posint;pageSize:posint
+  Request: —
+  Success: 200:PricePolicyPage
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE
+  Rules: Đọc chính sách giá theo template.
+
+ADM-04 | PUT /api/v1/admin/price-policies/{templateId}
+  FR: GM-04 | Access: GM
+  Headers: Idempotency-Key (required); X-Correlation-ID (optional)
+  Query: —
+  Request: PricePolicyRequest
+  Success: 200:PricePolicy
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR; 409: VERSION_CONFLICT; 422: INVALID_PRICE_POLICY
+  Rules: Upsert với expectedVersion; version=0 tạo mới cho template đã seed; commit SQL rồi refresh Redis. Lưu audit; không đổi giá listing cũ.
+
+ADM-05 | GET /api/v1/admin/trades/{tradeId}/trace
+  FR: CS-01 | Access: CS
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:SupportTradeTrace
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 404: TRADE_NOT_FOUND
+  Rules: Marketplace bắt buộc; Wallet/Inventory có thể partial, phân biệt chưa có record và dependency lỗi.
+
+ADM-06 | GET /api/v1/admin/trades
+  FR: CS-01 | Access: CS
+  Headers: X-Correlation-ID (optional)
+  Query: [required] userId:uuid;status:enum(HoldingFunds|Transferring|Settling|Finalizing|ReversingItem|ReleasingFunds|Completed|Failed);page:posint;pageSize:posint;from:dt;to:dt
+  Request: —
+  Success: 200:TradePage
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR
+  Rules: Proxy authorized search theo userId.
+
+ADM-07 | PATCH /api/v1/admin/users/{userId}/status
+  FR: CS-02,AUTH-04 | Access: CS
+  Headers: Idempotency-Key (required); X-Correlation-ID (optional)
+  Query: —
+  Request: ModerationRequest
+  Success: 200:ModerationResult
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN, ACCOUNT_BANNED; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 400: VALIDATION_ERROR; 404: USER_NOT_FOUND; 409: IDEMPOTENCY_CONFLICT, INVALID_ACCOUNT_TARGET
+  Rules: Audit request, call Auth với operationId bền vững, record outcome. Chỉ Player. Timeout retry cùng key, không khẳng định ban thành công khi chưa xác nhận.
+
+ADM-I01 | GET /internal/v1/admin/price-policies/{templateId}
+  FR: MKT-01,GM-04 | Access: Service:marketplace
+  Headers: X-Correlation-ID (optional)
+  Query: —
+  Request: —
+  Success: 200:PricePolicy
+  Errors: 401: UNAUTHENTICATED; 403: FORBIDDEN; 500: INTERNAL_ERROR; 503: DEPENDENCY_UNAVAILABLE; 404: PRICE_POLICY_NOT_FOUND
+  Rules: Fallback khi Marketplace đọc Redis price:policy:{templateId} bị cache miss. Admin đọc SQL authoritative, đồng thời refresh lại cache nếu khả dụng; nếu không tồn tại policy trả 404 (Marketplace map sang 503 PRICE_POLICY_UNAVAILABLE).
+05. DTO / SCHEMA DICTIONARY
+==========================
+Notation: @Name references a DTO; [] array; uuid Guid; dt UTC date-time; gem nonnegative Int64; positive Int64 >=1; long signed Int64; int Int32; posint >=1; nonnegint >=0; band 0..9999 bps; bps 0..10000; | null nullable; optional may be omitted. All other fields required. Enum values fixed.
+
+ProblemDetails — Lỗi REST; errors là danh sách lỗi validation, không chứa secret.
+  type: uri [required]
+  title: str [required]
+  status: int [required]
+  detail: text [required]
+  instance: str [required]
+  code: str [required]
+  traceId: str [required]
+  errors: text[] [optional]
+
+LoginRequest
+  email: email [required]
+  password: str [required]
+
+GoogleLoginRequest
+  idToken: str [required] — Google credential ID token
+  nonce: str [optional] — chỉ nếu đã thiết lập challenge phía server
+
+RefreshRequest
+  refreshToken: str [required]
+
+User
+  userId: uuid [required]
+  email: email [required]
+  displayName: str [required]
+  role: enum(Player|GM|CS) [required]
+  status: enum(Active|TradeRestricted|Banned) [required]
+  version: gem [required]
+
+TokenResponse
+  accessToken: str [required]
+  refreshToken: str [required]
+  tokenType: enum(Bearer) [required]
+  expiresIn: posint [required] — giây
+  user: @User [required]
+
+AccessStatus
+  userId: uuid [required]
+  role: enum(Player|GM|CS) [required]
+  status: enum(Active|TradeRestricted|Banned) [required]
+  canTrade: bool [required]
+  version: gem [required]
+
+ModerationRequest
+  status: enum(Active|TradeRestricted|Banned) [required]
+  reason: str [required] — tối đa 500 ký tự
+
+InternalModerationRequest
+  operationId: uuid [required]
+  actorId: uuid [required]
+  status: enum(Active|TradeRestricted|Banned) [required]
+  reason: str [required]
+
+ModerationResult
+  actionId: uuid [required]
+  targetUserId: uuid [required]
+  status: enum(Active|TradeRestricted|Banned) [required]
+  version: gem [required]
+  updatedAt: dt [required]
+
+Balance
+  userId: uuid [required]
+  currency: enum(GEM) [required]
+  totalBalance: gem [required]
+  holdBalance: gem [required]
+  availableBalance: gem [required]
+  version: gem [required]
+
+TopUpPackage
+  packageId: str [required]
+  amountVnd: positive [required]
+  gemAmount: positive [required]
+
+TopUpPackages
+  items: @TopUpPackage[] [required]
+
+CreateTopUpRequest
+  packageId: str [required] — giá từ danh mục server
+
+TopUpOrder
+  topUpId: uuid [required]
+  provider: enum(ZALOPAY) [required]
+  appTransId: str [required]
+  providerTxnId: long | null [required]
+  amountVnd: positive [required]
+  gemAmount: positive [required]
+  status: enum(Pending|Paid|Failed|Expired) [required]
+  paymentUrl: uri | null [required]
+  createdAt: dt [required]
+  paidAt: dt | null [required]
+
+ZaloPayCallbackRequest
+  data: str [required] — chuỗi JSON gốc, không serialize lại
+  mac: str [required]
+  type: int [required] — 1 = Order
+
+ZaloPayCallbackResponse
+  return_code: int [required] — mã 1, 2, 0 hoặc -1
+  return_message: str [required]
+
+WalletTransaction
+  entryId: uuid [required]
+  userId: uuid [required]
+  tradeId: uuid | null [required]
+  topUpId: uuid | null [required]
+  totalDelta: long [required]
+  holdDelta: long [required]
+  feeGem: gem | null [required] — chỉ có giá trị khi type=TaxBurn (ghi theo sellerId), các loại khác null
+  type: enum(TopUp|Hold|SettlementDebit|SettlementCredit|Release|TaxBurn) [required]
+  createdAt: dt [required]
+
+WalletTransactionPage
+  items: @WalletTransaction[] [required]
+  page: posint [required]
+  pageSize: posint [required]
+  totalCount: gem [required]
+
+FundHold
+  tradeId: uuid [required]
+  buyerId: uuid [required]
+  amount: positive [required]
+  status: enum(Held|Settled|Released) [required]
+  updatedAt: dt [required]
+
+WalletTradeTrace
+  tradeId: uuid [required]
+  hold: @FundHold | null [required]
+  settlementStatus: enum(NotSettled|Settled) [required]
+  entries: @WalletTransaction[] [required]
+
+WalletSupply
+  totalGem: gem [required]
+  heldGem: gem [required]
+  availableGem: gem [required]
+  asOf: dt [required]
+
+ItemTemplate
+  templateId: uuid [required]
+  name: str [required]
+  category: str [required]
+  rarity: str [required]
+  tradable: bool [required]
+
+InventoryItem
+  itemId: uuid [required]
+  ownerId: uuid [required]
+  templateId: uuid [required]
+  name: str [required]
+  category: str [required]
+  rarity: str [required]
+  tradable: bool [required]
+  quantity: posint [required]
+  status: enum(Available|Locked|PendingSettlement) [required]
+  listingId: uuid | null [required]
+  tradeId: uuid | null [required]
+
+InventoryView
+  userId: uuid [required]
+  capacity: nonnegint [required]
+  usedSlots: nonnegint [required] — gồm slot reverse dự trữ
+  items: @InventoryItem[] [required]
+
+GrantItemRequest
+  userId: uuid [required]
+  templateId: uuid [required]
+  quantity: posint [required]
+
+LockItemRequest
+  listingId: uuid [required]
+  itemId: uuid [required]
+  sellerId: uuid [required]
+  quantity: posint [required]
+  templateId: uuid [required]
+
+LockItemResult
+  listingId: uuid [required]
+  item: @InventoryItem [required]
+  lockedAt: dt [required]
+
+UnlockItemRequest
+  itemId: uuid [required]
+  sellerId: uuid [required]
+
+ItemLockStatus
+  listingId: uuid [required]
+  itemId: uuid | null [required]
+  status: enum(Locked|Released|NotFound) [required]
+
+ItemTransferTrace
+  tradeId: uuid [required]
+  itemId: uuid [required]
+  sellerId: uuid [required]
+  buyerId: uuid [required]
+  quantity: posint [required]
+  status: enum(PendingSettlement|Finalized|Reversed) [required]
+  updatedAt: dt [required]
+
+PricePolicy
+  templateId: uuid [required]
+  basePrice: positive [required]
+  referencePrice: positive [required]
+  bandBasisPoints: band [required]
+  minUnitPrice: positive [required]
+  maxUnitPrice: positive [required]
+  version: gem [required]
+  asOf: dt [required]
+
+PricePolicyRequest
+  basePrice: positive [required]
+  bandBasisPoints: band [required]
+  expectedVersion: gem [required] — 0 khi tạo mới
+  reason: str [required]
+
+PricePolicyPage
+  items: @PricePolicy[] [required]
+  page: posint [required]
+  pageSize: posint [required]
+  totalCount: gem [required]
+
+CreateListingRequest
+  itemId: uuid [required]
+  quantity: posint [required]
+  unitPrice: positive [required]
+
+Listing
+  listingId: uuid [required]
+  sellerId: uuid [required]
+  itemId: uuid [required]
+  templateId: uuid [required]
+  itemName: str [required]
+  category: str [required]
+  rarity: str [required]
+  quantity: posint [required]
+  unitPrice: positive [required]
+  grossGem: positive [required]
+  status: enum(PendingLock|Active|Processing|Sold|Cancelled|CreateFailed) [required]
+  version: gem [required]
+  createdAt: dt [required]
+  updatedAt: dt [required]
+
+ListingPage
+  items: @Listing[] [required]
+  page: posint [required]
+  pageSize: posint [required]
+  totalCount: gem [required]
+
+CancelListingResult
+  listingId: uuid [required]
+  status: enum(Cancelled) [required]
+  inventoryUnlockStatus: enum(Pending|Confirmed) [required]
+
+PurchaseAccepted
+  tradeId: uuid [required]
+  listingId: uuid [required]
+  status: enum(HoldingFunds|Transferring|Settling|Finalizing|ReversingItem|ReleasingFunds|Completed|Failed) [required]
+  grossGem: positive [required]
+  feeGem: gem [required]
+  sellerNetGem: gem [required]
+  statusUrl: str [required]
+
+Trade
+  tradeId: uuid [required]
+  listingId: uuid [required]
+  buyerId: uuid [required]
+  sellerId: uuid [required]
+  itemId: uuid [required]
+  templateId: uuid [required]
+  quantity: posint [required]
+  unitPrice: positive [required]
+  grossGem: positive [required]
+  feeGem: gem [required]
+  sellerNetGem: gem [required]
+  status: enum(HoldingFunds|Transferring|Settling|Finalizing|ReversingItem|ReleasingFunds|Completed|Failed) [required]
+  failureCode: str | null [required]
+  requiresReview: bool [required]
+  createdAt: dt [required]
+  updatedAt: dt [required]
+  completedAt: dt | null [required]
+
+TradePage
+  items: @Trade[] [required]
+  page: posint [required]
+  pageSize: posint [required]
+  totalCount: gem [required]
+
+SagaStep
+  step: str [required]
+  outcome: enum(Pending|Succeeded|Rejected|Retrying|Unknown) [required]
+  at: dt [required]
+  errorCode: str | null [required]
+
+MarketTradeTrace
+  trade: @Trade [required]
+  correlationId: uuid [required]
+  steps: @SagaStep[] [required]
+
+MarketListingStats
+  activeListingCount: gem [required]
+  asOf: dt [required]
+
+MarketStatistic
+  day: date [required]
+  templateId: uuid [required]
+  tradeCount: gem [required]
+  volume: gem [required] — số lượng item
+  totalGrossGem: gem [required]
+  totalFeeGem: gem [required]
+  minUnitPrice: gem | null [required]
+  maxUnitPrice: gem | null [required]
+  referencePrice: positive [required]
+  asOf: dt [required]
+
+MarketStatisticPage
+  items: @MarketStatistic[] [required]
+  page: posint [required]
+  pageSize: posint [required]
+  totalCount: gem [required]
+
+MarketOverview
+  day: date [required]
+  tradeCount: gem [required]
+  volume: gem [required]
+  totalGrossGem: gem [required]
+  totalFeeGem: gem [required]
+  gemSupply: @WalletSupply | null [required]
+  activeListingCount: gem | null [required]
+  partial: bool [required]
+  unavailableSources: str[] [required]
+  asOf: dt [required]
+
+SupportTradeTrace
+  marketplace: @MarketTradeTrace [required]
+  wallet: @WalletTradeTrace | null [required]
+  inventory: @ItemTransferTrace | null [required]
+  partial: bool [required]
+  unavailableSources: str[] [required]
+
+Health
+  status: enum(Healthy|Unhealthy) [required]
+
+06. ZALOPAY / GOOGLE INTEGRATION CONTRACTS
+==========================================
+ZaloPay v2 Sandbox base: https://sb-openapi.zalopay.vn; wallet holds app_id, Key1, Key2, callback URL in secret/config, never in source or client. Provider contract reference: https://developers.zalopay.vn/v2/general/overview.html (checked 2026-11-19). Use classic v2 gateway contract, do not mix callback codes with a different ZaloPay API version.
+Create order: POST /v2/create, application/x-www-form-urlencoded. app_id:int, app_trans_id:string unique (yyMMdd prefix in Vietnam time + unique suffix within provider length), app_user:string (internal userId), app_time:int64 Unix ms, amount:int64 VND, item:string JSON array, embed_data:string JSON object, description:string, callback_url:HTTPS URL, bank_code:string as configured by sandbox, mac:string hex. Compute HMAC-SHA256 Key1 over pipe-joined app_id, app_trans_id, app_user, amount, app_time, embed_data, item in this order; use exact serialized strings. Response: return_code, return_message, sub_return_code, sub_return_message, order_url, zp_trans_token (if returned). Persist paymentUrl, not provider secret. return_code=1 + URL means order created, not paid. Duplicate app_trans_id (sub_return_code=-68) or network timeout => reconcile original order; no second charge/order by blind retry.
+Callback: POST /api/v1/wallet/zalopay/callback, JSON data:string, mac:string, type:int=1. Verify HMAC-SHA256(Key2, original data string) constant-time before parsing inner data. Validate configured app_id, app_trans_id, app_user, amount, zp_trans_id; compare to original persisted order, not client. For mismatched valid signed data, flag for review and do not credit; reply 0 while unresolved, reconcile and alert. Exact duplicate of already credited payment -> 2; conflicting transaction ID is not an exact duplicate. First successful durable credit -> 1; transient DB failure -> 0; invalid MAC/unsupported type -> -1. HTTP 200 with {return_code,return_message}; callback malformed JSON -> 400 as documented in WAL-06. No JWT, no dependence on redirect.
+Query: POST /v2/query, app_id, app_trans_id, mac=HMAC-SHA256(Key1, app_id|app_trans_id|Key1). Response return_code 1=success, 2=failure, 3=unpaid/processing; also use sub_return_code and is_processing. On successful result validate amount and zp_trans_id and use same settlement operation as callback. Query pending orders periodically and around expiry (default provider window 15 min); mark Failed/Expired only on confirmed terminal provider result. Network errors/uncertain expiry remain Pending, log for review; a verified late payment must be reconciled, never silently dropped. Sandbox config/credential and exact expiry settings must be tested. No ZaloPay refund endpoint in MVP: Saga refund is release of virtual Gem hold only.
+SQL settlement: lock persisted order, verify existing credit/unique provider ID, increase Wallet.TotalBalance by stored GemAmount, add one TopUp ledger entry with OperationKey=topup:{topUpId}, update Paid + ProviderTxnId + PaidAt, commit atomically. Use unique indexes on appTransId, providerTxnId (filtered where not NULL) and OperationKey. Callback/query may run concurrently. Pending order has nullable paymentUrl; persist it when create succeeds. Add PaymentUrl nullable to ERD 09 if missing. Never overwrite Paid with Failed/Pending. Provider redirect only opens status page; GET top-up status uses SQL.
+Google: client obtains Google ID credential via Google Identity Services (minimal local browser test page). POST /api/v1/auth/google with {idToken}; Auth verifies signature, issuer, audience against configured OAuth client ID, expiry, and nonce only if a server-generated nonce challenge is implemented (otherwise omit optional nonce). If Google GIS posts directly to backend, use its matching CSRF validation or adapt via explicit client JSON callback; protect login against CSRF as appropriate. Use stable Google sub + issuer for identity, not email; verify email when used; unique provider+subject. Return internal JWT, never authorize marketplace by Google token. Official guide: https://developers.google.com/identity/gsi/web/guides/verify-google-id-token. No Google access token storage or extra scopes in MVP.
+
+07. ASYNCHRONOUS MESSAGE CONTRACTS (RABBITMQ / MASSTRANSIT)
+==========================================================
+Shared project: Marketplace.Contracts.V1 (C# records). All services reference same version. One logical type per command/event; don't duplicate differing types by service namespace. Commands sent to destination queue; events published; MassTransit native envelope, no second custom JSON envelope. Common business payload fields: correlationId:uuid (=tradeId for trade, listingId for listing lifecycle); operationId:uuid (stable for each logical command/result; deterministically generated or persisted); occurredAt:UTC dt (events only). Use MassTransit MessageId, CorrelationId, Causation/InitiatorId headers as applicable. Retry same operationId; result event echoes operationId and correlationId. All fields required unless '?'; long = signed Int64; positive money nonnegative as defined above. Names are case sensitive in shared C# code and serialized camelCase. No JWT, raw passwords, provider secrets or whole entities in messages.
+Queue names proposed: wallet-commands, inventory-commands, marketplace-saga, marketplace-projection, admin-analytics. Durable queues/persistent messages, broker volumes. Commands have one owning consumer; events may have multiple independent consumers.
+
+Command | Producer -> Consumer | Payload (in addition to common fields)
+HoldBuyerFundsCommand | Marketplace -> Wallet | tradeId:uuid, buyerId:uuid, amount:positive
+TransferItemCommand | Marketplace -> Inventory | tradeId:uuid, listingId:uuid, itemId:uuid, templateId:uuid, sellerId:uuid, buyerId:uuid, quantity:posint
+SettleTradeCommand | Marketplace -> Wallet | tradeId:uuid, buyerId:uuid, sellerId:uuid, grossGem:positive, feeGem:gem, sellerNetGem:gem
+RefundBuyerFundsCommand | Marketplace -> Wallet | tradeId:uuid, buyerId:uuid, amount:positive
+ReverseItemTransferCommand | Marketplace -> Inventory | tradeId:uuid, listingId:uuid, itemId:uuid, sellerId:uuid, buyerId:uuid
+FinalizeItemTransferCommand | Marketplace -> Inventory | tradeId:uuid, listingId:uuid, itemId:uuid, buyerId:uuid
+UnlockItemCommand | Marketplace -> Inventory | listingId:uuid, itemId:uuid, sellerId:uuid (cancel or failed listing compensation)
+
+Event | Producer -> Consumer | Payload (in addition to common fields)
+BuyerFundsHeldEvent | Wallet -> Marketplace Saga | tradeId:uuid, buyerId:uuid, amount:positive
+BuyerFundsHoldFailedEvent | Wallet -> Marketplace Saga | tradeId:uuid, failureCode:str (INSUFFICIENT_FUNDS or definitive rejection with no hold)
+ItemTransferredEvent | Inventory -> Marketplace Saga | tradeId:uuid, listingId:uuid, itemId:uuid, buyerId:uuid, quantity:posint
+ItemTransferFailedEvent | Inventory -> Marketplace Saga | tradeId:uuid, failureCode:str (INVENTORY_FULL, ITEM_LOCK_MISMATCH; no transfer committed)
+TradeSettledEvent | Wallet -> Marketplace Saga | tradeId:uuid, grossGem:positive, feeGem:gem, sellerNetGem:gem
+TradeSettlementRejectedEvent | Wallet -> Marketplace Saga | tradeId:uuid, failureCode:str (confirmed no settlement, durably prevent same operation committing later)
+BuyerFundsRefundedEvent | Wallet -> Marketplace Saga | tradeId:uuid, amount:positive
+ItemTransferReversedEvent | Inventory -> Marketplace Saga | tradeId:uuid, listingId:uuid, itemId:uuid
+ItemTransferFinalizedEvent | Inventory -> Marketplace Saga | tradeId:uuid, listingId:uuid, itemId:uuid
+ItemUnlockedEvent | Inventory -> Marketplace | listingId:uuid, itemId:uuid, sellerId:uuid
+ListingCreatedEvent | Marketplace -> Projection | listing:Listing (full DTO snapshot, status Active)
+ListingProcessingEvent | Marketplace -> Projection | listing:Listing (status Processing)
+ListingCancelledEvent | Marketplace -> Projection | listing:Listing (status Cancelled)
+ListingReactivatedEvent | Marketplace -> Projection | listing:Listing (status Active, higher version)
+TradeCompletedEvent | Marketplace -> Projection, Admin Analytics | listing:Listing (status Sold), tradeId:uuid, buyerId:uuid, sellerId:uuid, templateId:uuid, quantity:posint, unitPrice:positive, grossGem:positive, feeGem:gem, sellerNetGem:gem, completedAt:dt
+TradeFailedEvent | Marketplace -> audit/optional consumers | tradeId:uuid, listingId:uuid, failureCode:str, failedAt:dt (terminal compensated only)
+All listing snapshots include listingId/version; projection updates only if newer than last processed; non-Active snapshots hidden, keep tombstone version. TradeCompletedEvent uniquely dedup by tradeId for analytics (NOT by listingId alone). Do not expose message consumers as public REST API.
+Durable business rejections are persisted with operationId and replay same response. Transient errors throw/retry; error queue plus Saga requiresReview if retries exhausted. Failed finalize/reverse/release/unlock is NOT terminal success: keep existing Saga/lock state, retry/redrive after diagnosis; optional MassTransit Fault<T> used for observability, never treated as proven business rejection. Result must be recorded atomically with local business changes and outbox. Persist Inbox/operation key or unique business guard, not memory only.
+
+08. WORKFLOW STATE AND BUSINESS INVARIANTS
+==========================================
+Listing: PendingLock -> Active or CreateFailed; Active -> Processing or Cancelled; Processing -> Sold or Active after compensation. Never reactivate cancelled/sold. Redis SET NX PX token (TTL proposed 20s), compare-and-delete; same lock key for cancel/purchase where used. SQL conditional UPDATE WHERE state=Active plus version (only one claim); persist trade+saga+outbox in same transaction; release Redis after durable claim, not after the entire Saga. Redis unavailable => fail closed 503 before intent. Active only after lock confirmed. Lock/create failures with unknown result -> PendingLock and recovery via same listingId; only fail after confirmed no lock or compensated release. Cancel commit + unlock command in outbox; inventory unlock retries; cancel API reports Pending until confirmed. If item is PendingSettlement cannot unlock casually.
+Trade state machine: HoldingFunds -> Transferring -> Settling -> Finalizing -> Completed. Hold rejection -> Failed + Listing Active. Confirmed transfer rejection -> ReleasingFunds -> Failed + Listing Active. Confirmed settlement rejection -> ReversingItem -> ReleasingFunds -> Failed + Listing Active. Unknown outcome stays in current state, requiresReview if exhausted; never assume timeout means rejection. After settle commit, forward recovery only. Complete only after finalization confirmed; publish TradeCompletedEvent from same commit as Sold/Completed. Authoritative trace GET from owning service.
+Wallet: Total >= Hold >= 0, Available=Total-Hold. Hold atomically increments Hold after checking available. Settle verifies hold amount/owner/status, debits Buyer total and hold, credits Seller net, burn fee; one WalletDb tx (deterministic row lock order). FundHold state Held -> Settled or Released; Settled must never release. Ledger deltas Hold: total 0/hold +gross; Release: total 0/hold -gross; SettlementDebit: total -gross/hold -gross; SettlementCredit: total +net/hold 0. TaxBurn is audit-only recorded under sellerId (totalDelta=0, holdDelta=0, feeGem=fee), never subtract fee again. Supply falls exactly fee. Unique OperationKey per trade+operation+party; same replay no mutation. Buyer/seller wallets initialized lazily idempotently.
+Inventory: one item/stack per listing, whole stack purchased; item remains same itemId when ownership changes, PendingSettlement blocked from use/listing. Reserve seller slot until finalize to guarantee reverse capacity. Transfer checks locked item/listing/owner/quantity, buyer capacity; local atomic owner change + transfer record. Reverse restores seller locked state with same listingId; finalize makes Available and releases reserved slot. Replay exact operation returns prior outcome. Grant and lock capacity/ownership protected with SQL state/row version.
+Price: Gem integer, quantity positive; gross=checked(unitPrice*quantity); fee=floor(gross*feeBps/10000) using checked wider intermediate; sellerNet=gross-fee. Proposed feeBps=500 (5%), bandBps=2000 (20%). Min=max(1,ceil(reference*(10000-band)/10000)); max=floor(reference*(10000+band)/10000). Validate current price at create only; price changes do not invalidate old listings by default; capture policy version, fee and amounts in Trade/Listing snapshot; no client total/fee authority. Admin owns PricePolicy SQL + Redis versioned projection. Redis key price:policy:{templateId}; Admin single writer; Marketplace read-only. On cache miss, Marketplace falls back to internal REST ADM-I01 (Admin refreshes Redis from SQL); if policy is still missing (404) or Admin unavailable, reject MKT-01 with 503 PRICE_POLICY_UNAVAILABLE rather than default silently; Admin warms up cache on startup. Seed base prices per template. Daily weighted avg = floor(sum grossGem / sum quantity), at least 1; use BasePrice until first successful trade, choose current Vietnam business day average once data available, otherwise carry previous reference. Persist Trade_Facts unique tradeId; derive Redis per-day aggregates from durable facts or idempotent projection; include late events in event day, reconcile after midnight. Summary job 00:00 Asia/Ho_Chi_Minh upserts prior day, no destructive reset of in-flight data. Price policy config version increments on GM modifications; reference updates use monotonic projection version or timestamp to avoid stale overwrite. Supply is stock, turnover is volume, neither alone proves inflation.
+
+09. GATEWAY / ROUTING / RUNTIME CONTRACTS
+=========================================
+Public routes: allow exactly listed /api/v1/auth/*, wallet/*, inventory/items, marketplace/* and admin/* operations; method-aware policy repeated in services. Callback anonymous only exact POST path. Auth/refresh/logout public as specified; all other public business routes JWT. No public seeder, internal data trace, /metrics, health, or service admin ports. Internal service key scopes: gateway->Auth GET status; marketplace->Auth GET status, Inventory item/lock/release/status/trace, Wallet trace, Admin GET price-policy (ADM-I01); admin->Auth status GET/PATCH, Wallet trace/supply, Inventory transfer trace, Marketplace trace/trades/stats; seeder->Inventory grant. Admin GM/CS permission check before any internal privileged call. Redis and message queues not Internet exposed. Use Docker host names and health checks; startup waits/retries dependencies. Each service + Gateway GET /health/live (200 when process healthy), /health/ready (200 ready, 503 not ready; Health DTO), GET /metrics (Prometheus text). These technical endpoints are documented here, not part of combined business OpenAPI operations. Swagger UI on private/local hosts; do not publish secrets in Swagger examples. ngrok HTTPS forwards only Gateway, including ZaloPay callback.
+
+10. TEST CONTRACTS / ACCEPTANCE CRITERIA
+=======================================
+T01 Google login: valid ID token -> internal role Player, seeded GM/CS login; invalid aud/exp -> 401; ban check ->403.
+T02 Topup: package selected -> 201 Pending URL; same key same order; different package same key ->409; signed callback + query replay/parallel -> one credit; invalid MAC/amount mismatch -> no credit; timeout -> original order Pending/reconcile.
+T03 Listing create: owner item tradable, whole stack, within band ->201 Active; other owner/lock ->409; out of band ->422; failed persist after lock -> compensation; lost reply -> PendingLock/recover.
+T04 Cancel: seller accepts Active -> Cancelled + eventual unlock; competing purchase claim -> only one state transition wins.
+T05 Purchase: accept 202 + tradeId; poll until Completed, listing Sold, buyer obtains Available item, balance difference -gross/+net, supply -fee, one history record.
+T06 Concurrency: 100 simultaneous requests on same listing from distinct users all funded with capacity; exactly one successful trade, remaining conflicts; same buyer across multiple listings cannot overspend; Redis TTL expiry not bypass SQL guard.
+T07 Compensation: inventory full after hold -> release hold, seller locked original item, listing Active, trade Failed; confirmed settlement rejection -> reverse then release; simulated unknown settlement -> no blind refund; finalize transient error -> retry forward.
+T08 CQRS: duplicate and out-of-order Listing/Trade messages do not resurrect sold listing. Mongo list eventual; SQL detail/trade status authoritative. Measure sync lag target 1–2s on local healthy system, not guaranteed SLA.
+T09 GM: reference price updates once per trade, band update authorized GM only, midnight summary repeat safe; CS cannot edit prices; partial data sources indicated.
+T10 CS: search user trades, view trace, ban/restrict current Player; blocked trade on stale JWT; old accepted Saga continues; unauthorized actor returns 403.
+T11 Integration: Docker compose up, private routes inaccessible via Gateway, /metrics scraped, no secrets in logs; verify ProblemDetails codes, paging, ownership for all endpoints.
+Minimum unit tests: price bounds & rounding, hold insufficient/concurrent, settle fee, release idempotency, projection version. Postman collections: login/setup -> topup -> grant/list -> purchase/poll -> negative cases -> admin traces. Sandbox / concurrency / recovery tests require actual running services, not satisfied by spec alone.
+
+11. FR TRACEABILITY & FREEZE CHECKLIST
+======================================
+Retained 29 FR: AUTH-01,02,04 -> AUTH APIs + status check; WAL-01..06 -> WAL APIs + hold/settle/release commands; INV-01..05 -> INV APIs + unlock/transfer/finalize/reverse messages; MKT-01..05 -> MKT-01..03 + Saga; QRY-01 -> Projection events; QRY-02..04 -> MKT-04..08 + wallet ledger; GM-01,02 -> TradeCompleted consumer + daily job; GM-03,04 -> ADM-01..04; CS-01,02 -> ADM-05..07 + internal tracing/moderation. Google Sign-In is an extension to FR-AUTH-01, not resurrected OTP FR-AUTH-03.
+Before coding, agree on: fee/band/price averaging, package amounts/rate, default capacity, seeded credentials and templates, exact JWT claims/key config, internal credentials, queue names, ownership policies, ports, status and naming, ZaloPay app credentials + callback URL. Align architecture diagrams 09/22/26 and original diagrams referring to old paths. Update ERD for persisted idempotency/outbox/inbox, PaymentUrl, listing policy/fee snapshots, moderation operation records and slot reservation if not already included. These are proposed design commitments, not a statement they are already implemented. Keep changes via PR/version bump; test each service against shared contract before integration.
+Artifacts: API-Contracts.txt (normative business rules + integration spec v0.1), marketplace-openapi.yaml (machine-readable REST baseline OAS 3.1; internal operations use private servers). If Swagger UI version doesn't support 3.1/null schemas, use compatible UI or transform to 3.0 intentionally; do not change DTO semantics. The schema is not an implemented API or generated Swagger from code.
+
+12. SAMPLE REQUESTS / RESPONSES (FOR POSTMAN / SWAGGER)
+=======================================================
+All sample IDs below are illustrative, not seeded credentials. Actual sign-in/password/Google token, package IDs and UUIDs must come from the running environment. Protected requests send Authorization: Bearer <internal_access_token>. Mutation keys are generated by caller and reused on retry.
+
+AUTH-02 POST /api/v1/auth/google
+Request: {"idToken":"<Google ID token>"}
+Response 200: {"accessToken":"<internal JWT>","refreshToken":"<opaque token>","tokenType":"Bearer","expiresIn":900,"user":{"userId":"11111111-1111-4111-8111-111111111111","email":"player@example.test","displayName":"Player A","role":"Player","status":"Active","version":1}}
+
+WAL-04 POST /api/v1/wallet/top-ups
+Idempotency-Key: topup-demo-001
+Request: {"packageId":"demo-1000"}
+Response 201 (illustrative package, not mandated conversion): {"topUpId":"22222222-2222-4222-8222-222222222222","provider":"ZALOPAY","appTransId":"261119_demo001","providerTxnId":null,"amountVnd":10000,"gemAmount":1000,"status":"Pending","paymentUrl":"https://example.test/sandbox-payment","createdAt":"2026-11-19T12:00:00Z","paidAt":null}
+Location: /api/v1/wallet/top-ups/22222222-2222-4222-8222-222222222222
+WAL-06 valid callback response after confirmed durable credit: {"return_code":1,"return_message":"success"}
+WAL-01 response after successful credit (assuming zero starting balance): {"userId":"11111111-1111-4111-8111-111111111111","currency":"GEM","totalBalance":1000,"holdBalance":0,"availableBalance":1000,"version":2}
+
+MKT-01 POST /api/v1/marketplace/listings (seller JWT)
+Idempotency-Key: listing-demo-001
+Request: {"itemId":"33333333-3333-4333-8333-333333333333","quantity":1,"unitPrice":1000}
+MKT-03 POST /api/v1/marketplace/listings/44444444-4444-4444-8444-444444444444/purchase (buyer JWT, distinct from seller)
+Idempotency-Key: purchase-demo-001
+Request: no body
+Response 202: {"tradeId":"55555555-5555-4555-8555-555555555555","listingId":"44444444-4444-4444-8444-444444444444","status":"HoldingFunds","grossGem":1000,"feeGem":50,"sellerNetGem":950,"statusUrl":"/api/v1/marketplace/trades/55555555-5555-4555-8555-555555555555"}
+Location: /api/v1/marketplace/trades/55555555-5555-4555-8555-555555555555
+Poll GET status until Completed or Failed; if requiresReview true, show unresolved (not successful or refunded). Example economic invariant: buyer -1000, seller +950, total supply -50 on settlement.
+
+Message example: HoldBuyerFundsCommand business payload, inside MassTransit envelope:
+{"correlationId":"55555555-5555-4555-8555-555555555555","operationId":"66666666-6666-4666-8666-666666666666","tradeId":"55555555-5555-4555-8555-555555555555","buyerId":"11111111-1111-4111-8111-111111111111","amount":1000}
+BuyerFundsHeldEvent echoes IDs and amount plus occurredAt; a repeated operation must not reserve twice.
+
+ADM-04 PUT /api/v1/admin/price-policies/{templateId} (GM JWT)
+Idempotency-Key: policy-demo-001
+Request: {"basePrice":1000,"bandBasisPoints":2000,"expectedVersion":0,"reason":"Initialize demo policy"}
+ADM-07 PATCH /api/v1/admin/users/{userId}/status (CS JWT)
+Idempotency-Key: moderation-demo-001
+Request: {"status":"TradeRestricted","reason":"Demo moderation"}

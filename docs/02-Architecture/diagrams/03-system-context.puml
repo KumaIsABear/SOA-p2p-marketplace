@@ -1,0 +1,19 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+left to right direction
+actor Player
+actor "Game Master" as GM
+actor "Customer Support" as CS
+rectangle "In-game P2P Marketplace\nBackend system" as System
+cloud "Google Identity" as Google
+cloud "ZaloPay Sandbox" as Pay
+rectangle "Core Game / Seeder" as Seed
+Player --> System : Login, top-up, trade
+GM --> System : Price policy, analytics
+CS --> System : Trace, restrictions
+System --> Google : Identity verification
+System --> Pay : Create Order / Query Order
+Pay --> System : Payment Callback
+Seed --> System : Provision items (internal)
+@enduml
