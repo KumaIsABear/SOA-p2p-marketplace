@@ -95,6 +95,80 @@ services:
       retries: 10
       start_period: 5s
 
+  rabbitmq:
+    image: rabbitmq:4.0-management-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: "rabbitmq_admin"
+      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_BOOTSTRAP_PASSWORD:?RABBITMQ_BOOTSTRAP_PASSWORD must be set in .env}"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - marketplace-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_port_connectivity'
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+  rabbitmq-init:
+    image: alpine:3.21
+    restart: "no"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_BOOTSTRAP_PASSWORD: "${RABBITMQ_BOOTSTRAP_PASSWORD:?RABBITMQ_BOOTSTRAP_PASSWORD must be set in .env}"
+      RABBITMQ_WALLET_PASSWORD: "${RABBITMQ_WALLET_PASSWORD:?RABBITMQ_WALLET_PASSWORD must be set in .env}"
+      RABBITMQ_INVENTORY_PASSWORD: "${RABBITMQ_INVENTORY_PASSWORD:?RABBITMQ_INVENTORY_PASSWORD must be set in .env}"
+      RABBITMQ_MARKETPLACE_PASSWORD: "${RABBITMQ_MARKETPLACE_PASSWORD:?RABBITMQ_MARKETPLACE_PASSWORD must be set in .env}"
+      RABBITMQ_ADMIN_PASSWORD: "${RABBITMQ_ADMIN_PASSWORD:?RABBITMQ_ADMIN_PASSWORD must be set in .env}"
+    volumes:
+      - ./infrastructure/rabbitmq/init-rabbitmq.sh:/init/init-rabbitmq.sh:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - 'apk add --no-cache curl >/dev/null && tr -d "\r" < /init/init-rabbitmq.sh > /tmp/init-rabbitmq.sh && sh /tmp/init-rabbitmq.sh'
+    networks:
+      - marketplace-network
+
+  auth-api:
+    build:
+      context: .
+      dockerfile: src/Services/Auth.API/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      sqlserver-init:
+        condition: service_completed_successfully
+    environment:
+      ASPNETCORE_ENVIRONMENT: "Production"
+      ASPNETCORE_URLS: "http://+:8080"
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=AuthDb;User Id=auth_runtime;Password=${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD must be set in .env};Encrypt=True;TrustServerCertificate=True;"
+      Jwt__Issuer: "marketplace-auth"
+      Jwt__Audience: "marketplace-api"
+      Jwt__SigningKey: "${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set in .env}"
+      Jwt__AccessTokenMinutes: "15"
+      Jwt__RefreshTokenDays: "7"
+      Google__ClientId: "${GOOGLE_CLIENT_ID:-}"
+      Database__AutoMigrate: "true"
+      Seed__Enabled: "true"
+      Seed__DefaultPassword: "${AUTH_SEED_PASSWORD:-}"
+    networks:
+      - marketplace-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'bash -c ''exec 3<>/dev/tcp/127.0.0.1/8080 && printf "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && head -n 1 <&3 | grep -q "200"'''
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
 networks:
   marketplace-network:
     name: marketplace-network
@@ -104,3 +178,4 @@ volumes:
   sqlserver-data:
   mongodb-data:
   redis-data:
+  rabbitmq-data:
