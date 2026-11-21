@@ -39,4 +39,21 @@ create_service_user "inventory_service" "${RABBITMQ_INVENTORY_PASSWORD:?RABBITMQ
 create_service_user "marketplace_service" "${RABBITMQ_MARKETPLACE_PASSWORD:?RABBITMQ_MARKETPLACE_PASSWORD must be set}"
 create_service_user "admin_service" "${RABBITMQ_ADMIN_PASSWORD:?RABBITMQ_ADMIN_PASSWORD must be set}"
 
+
+declare_queue() {
+  queue_name="$1"
+  echo "Declaring durable queue '${queue_name}'..."
+  api_put "/queues/marketplace/${queue_name}" '{"durable":true,"auto_delete":false,"arguments":{}}'
+}
+
+for q in \
+  wallet-commands \
+  inventory-commands \
+  marketplace-saga \
+  marketplace-projection \
+  admin-analytics
+do
+  declare_queue "${q}"
+  declare_queue "${q}_error"
+done
 echo "RabbitMQ bootstrap completed."
