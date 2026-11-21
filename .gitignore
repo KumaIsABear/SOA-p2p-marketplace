@@ -12,6 +12,7 @@ TestResults/
 .env
 .env.*
 !.env.example
+docker-compose.override.yml
 *.pem
 *.key
 *.pfx

@@ -1,0 +1,106 @@
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: "Developer"
+      MSSQL_SA_PASSWORD: "${SQL_SA_PASSWORD:?SQL_SA_PASSWORD must be set in .env}"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    networks:
+      - marketplace-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'SQLCMDPASSWORD="$$MSSQL_SA_PASSWORD" /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -Q "SELECT 1" -b -o /dev/null'
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  sqlserver-init:
+    image: mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04
+    restart: "no"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      SQL_SA_PASSWORD: "${SQL_SA_PASSWORD:?SQL_SA_PASSWORD must be set in .env}"
+      AUTH_DB_PASSWORD: "${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD must be set in .env}"
+      WALLET_DB_PASSWORD: "${WALLET_DB_PASSWORD:?WALLET_DB_PASSWORD must be set in .env}"
+      INVENTORY_DB_PASSWORD: "${INVENTORY_DB_PASSWORD:?INVENTORY_DB_PASSWORD must be set in .env}"
+      MARKETPLACE_DB_PASSWORD: "${MARKETPLACE_DB_PASSWORD:?MARKETPLACE_DB_PASSWORD must be set in .env}"
+      ADMIN_DB_PASSWORD: "${ADMIN_DB_PASSWORD:?ADMIN_DB_PASSWORD must be set in .env}"
+    volumes:
+      - ./infrastructure/sql/init-databases.sql:/init/init-databases.sql:ro
+    entrypoint:
+      - /bin/bash
+      - -euo
+      - pipefail
+      - -c
+      - |
+        SQLCMDPASSWORD="$$SQL_SA_PASSWORD" /opt/mssql-tools18/bin/sqlcmd \
+          -S sqlserver,1433 -U sa -C -b \
+          -v AUTH_DB_PASSWORD="$$AUTH_DB_PASSWORD" \
+          -v WALLET_DB_PASSWORD="$$WALLET_DB_PASSWORD" \
+          -v INVENTORY_DB_PASSWORD="$$INVENTORY_DB_PASSWORD" \
+          -v MARKETPLACE_DB_PASSWORD="$$MARKETPLACE_DB_PASSWORD" \
+          -v ADMIN_DB_PASSWORD="$$ADMIN_DB_PASSWORD" \
+          -i /init/init-databases.sql
+    networks:
+      - marketplace-network
+
+  mongodb:
+    image: mongo:8.0-noble
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: "root"
+      MONGO_INITDB_ROOT_PASSWORD: "${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set in .env}"
+      MONGO_INITDB_DATABASE: "MarketplaceReadDb"
+      MONGO_MARKETPLACE_PASSWORD: "${MONGO_MARKETPLACE_PASSWORD:?MONGO_MARKETPLACE_PASSWORD must be set in .env}"
+    volumes:
+      - mongodb-data:/data/db
+      - ./infrastructure/mongodb/init-mongo.js:/docker-entrypoint-initdb.d/01-init-mongo.js:ro
+    networks:
+      - marketplace-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'mongosh --quiet --username "$$MONGO_INITDB_ROOT_USERNAME" --password "$$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "db.adminCommand({ ping: 1 }).ok" | grep -q 1'
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  redis:
+    image: redis:7.4.12-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}"
+    command:
+      - /bin/sh
+      - -c
+      - 'exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"'
+    volumes:
+      - redis-data:/data
+    networks:
+      - marketplace-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -q PONG'
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+networks:
+  marketplace-network:
+    name: marketplace-network
+    driver: bridge
+
+volumes:
+  sqlserver-data:
+  mongodb-data:
+  redis-data:
