@@ -1,9 +1,11 @@
 ﻿FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 
+COPY src/Shared/Marketplace.Contracts/Marketplace.Contracts.csproj src/Shared/Marketplace.Contracts/
 COPY src/Services/Inventory.API/Inventory.API.csproj src/Services/Inventory.API/
 RUN dotnet restore src/Services/Inventory.API/Inventory.API.csproj
 
+COPY src/Shared/Marketplace.Contracts/ src/Shared/Marketplace.Contracts/
 COPY src/Services/Inventory.API/ src/Services/Inventory.API/
 RUN dotnet publish src/Services/Inventory.API/Inventory.API.csproj -c Release -o /app/publish --no-restore
 
