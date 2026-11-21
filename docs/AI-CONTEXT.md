@@ -17,8 +17,6 @@
 
 ## 2. Tech Stack & Thông số cần nhóm điền cứng 1 lần
 
-> **Lưu ý cho nhóm:** Trước khi tách nhánh code, điền chốt 4 mục có đánh dấu `[CHỐT]` bên dưới rồi commit lên `main`.
-
 | Thành phần | Giá trị chuẩn |
 |---|---|
 | Language / Framework | C# / ASP.NET Core Web API — TargetFramework: `.net9.0` |
