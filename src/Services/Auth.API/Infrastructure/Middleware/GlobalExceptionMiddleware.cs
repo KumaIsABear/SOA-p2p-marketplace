@@ -1,6 +1,6 @@
+using System.Data.Common;
 using System.Text.Json;
 using Auth.API.Application.DTOs;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
 namespace Auth.API.Infrastructure.Middleware;
@@ -18,6 +18,14 @@ public sealed class GlobalExceptionMiddleware {
     public async Task InvokeAsync(HttpContext context) {
         try {
             await _next(context);
+        } catch (Exception ex) when (ex is BadHttpRequestException or JsonException) {
+            await WriteProblemAsync(
+                context,
+                StatusCodes.Status400BadRequest,
+                "Bad Request",
+                "VALIDATION_ERROR",
+                "The request payload is malformed or invalid."
+            );
         } catch (Exception ex) when (IsDependencyFailure(ex)) {
             _logger.LogError(ex, "Dependency failure while processing {Path} (TraceId={TraceId}).", context.Request.Path, context.TraceIdentifier);
             await WriteProblemAsync(
@@ -40,9 +48,9 @@ public sealed class GlobalExceptionMiddleware {
     }
 
     private static bool IsDependencyFailure(Exception ex) {
-        return ex is SqlException or TimeoutException
-            || (ex is DbUpdateException dbEx && dbEx.InnerException is SqlException)
-            || (ex is InvalidOperationException && ex.InnerException is SqlException);
+        return ex is DbException or TimeoutException
+            || (ex is DbUpdateException dbEx && dbEx.InnerException is DbException)
+            || (ex is InvalidOperationException && ex.InnerException is DbException);
     }
 
     private static async Task WriteProblemAsync(HttpContext context, int status, string title, string code, string detail) {

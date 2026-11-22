@@ -8,8 +8,11 @@ using Auth.API.Application.Services;
 using Auth.API.Infrastructure.Middleware;
 using Auth.API.Infrastructure.Persistence;
 using Auth.API.Infrastructure.Security;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Tokens;
 using Prometheus;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -34,9 +37,66 @@ builder.Services.AddOptions<GoogleAuthOptions>()
 builder.Services.AddOptions<SeedOptions>()
     .Bind(builder.Configuration.GetSection(SeedOptions.SectionName));
 
+builder.Services.AddOptions<ServiceAuthOptions>()
+    .Bind(builder.Configuration.GetSection(ServiceAuthOptions.SectionName));
+
 builder.Services.AddDbContext<AuthDbContext>(options =>
     options.UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(5), null))
 );
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer();
+
+var problemJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+
+builder.Services
+    .AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+    .Configure<IOptions<JwtOptions>>((options, jwtOptionsAccessor) => {
+        var jwtOptions = jwtOptionsAccessor.Value;
+        var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.SigningKey));
+
+        options.MapInboundClaims = false;
+        options.TokenValidationParameters = new TokenValidationParameters {
+            ValidateIssuer = true,
+            ValidIssuer = jwtOptions.Issuer,
+            ValidateAudience = true,
+            ValidAudience = jwtOptions.Audience,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = signingKey,
+            ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromSeconds(30),
+            NameClaimType = "sub",
+            RoleClaimType = "role"
+        };
+
+        options.Events = new JwtBearerEvents {
+            OnChallenge = async context => {
+                context.HandleResponse();
+                await WriteAuthProblemAsync(
+                    context.HttpContext,
+                    StatusCodes.Status401Unauthorized,
+                    "Unauthorized",
+                    "UNAUTHENTICATED",
+                    "Authentication is required or the access token is invalid.",
+                    problemJsonOptions
+                );
+            },
+            OnForbidden = async context => {
+                await WriteAuthProblemAsync(
+                    context.HttpContext,
+                    StatusCodes.Status403Forbidden,
+                    "Forbidden",
+                    "FORBIDDEN",
+                    "You do not have permission to access this resource.",
+                    problemJsonOptions
+                );
+            }
+        };
+    });
+
+builder.Services.AddAuthorization();
 
 builder.Services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
 builder.Services.AddSingleton<ITokenService, JwtTokenService>();
@@ -80,6 +140,8 @@ var app = builder.Build();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<GlobalExceptionMiddleware>();
 app.UseHttpMetrics();
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapControllers();
 app.MapMetrics("/metrics");
@@ -89,6 +151,34 @@ if (builder.Configuration.GetValue("Database:AutoMigrate", true)) {
 }
 
 app.Run();
+
+static async Task WriteAuthProblemAsync(
+    HttpContext context,
+    int status,
+    string title,
+    string code,
+    string detail,
+    JsonSerializerOptions jsonOptions
+) {
+    if (context.Response.HasStarted) {
+        return;
+    }
+
+    context.Response.StatusCode = status;
+    context.Response.ContentType = "application/problem+json";
+
+    var problem = new ApiProblemDetails(
+        "about:blank",
+        title,
+        status,
+        detail,
+        context.Request.Path.Value ?? "/",
+        code,
+        context.TraceIdentifier
+    );
+
+    await context.Response.WriteAsync(JsonSerializer.Serialize(problem, jsonOptions));
+}
 
 static async Task InitializeDatabaseAsync(IServiceProvider services, ILogger logger) {
     const int maxAttempts = 5;

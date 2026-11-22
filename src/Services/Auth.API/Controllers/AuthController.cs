@@ -1,6 +1,8 @@
+using System.Security.Claims;
 using Auth.API.Application.Common;
 using Auth.API.Application.DTOs;
 using Auth.API.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Auth.API.Controllers;
@@ -38,6 +40,18 @@ public sealed class AuthController : ControllerBase {
         return NoContent();
     }
 
+    [HttpGet("me")]
+    [Authorize(Roles = "Player,GM,CS")]
+    public async Task<IActionResult> Me(CancellationToken cancellationToken) {
+        var sub = User.FindFirstValue("sub");
+        if (!Guid.TryParse(sub, out var userId) || userId == Guid.Empty) {
+            return ToProblemResult(AuthErrors.Unauthenticated("Authenticated token is missing a valid user subject."));
+        }
+
+        var result = await _authService.GetCurrentUserAsync(userId, cancellationToken);
+        return result.IsSuccess ? Ok(result.Value) : ToProblemResult(result.Error!);
+    }
+
     private ObjectResult ToProblemResult(AuthError error) {
         var problem = new ApiProblemDetails(
             "about:blank",
@@ -46,7 +60,8 @@ public sealed class AuthController : ControllerBase {
             error.Detail,
             HttpContext.Request.Path.Value ?? "/",
             error.Code,
-            HttpContext.TraceIdentifier
+            HttpContext.TraceIdentifier,
+            error.Errors
         );
 
         return new ObjectResult(problem) {

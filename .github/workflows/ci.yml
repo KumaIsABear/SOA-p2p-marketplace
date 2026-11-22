@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and Test (.NET 9)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 9 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore Marketplace.sln
+
+      - name: Build solution
+        run: dotnet build Marketplace.sln --configuration Release --no-restore
+
+      - name: Run tests
+        run: dotnet test Marketplace.sln --configuration Release --no-build --verbosity normal
+
+  validate-infra:
+    name: Validate Compose & Auth Image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate docker-compose.yml
+        run: |
+          sed 's/=$/=ci_placeholder_value_at_least_32_bytes_long/' .env.example > .env.ci
+          docker compose --env-file .env.ci config --quiet
+          rm -f .env.ci
+
+      - name: Build Auth.API Docker image
+        run: docker build -f src/Services/Auth.API/Dockerfile -t marketplace-auth-api:ci .

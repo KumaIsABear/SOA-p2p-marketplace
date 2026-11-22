@@ -18,12 +18,27 @@ public sealed record RefreshRequest(
     [param: Required, MinLength(1), MaxLength(512)] string RefreshToken
 );
 
+public sealed record InternalModerationRequest(
+    [param: Required] Guid? OperationId,
+    [param: Required] Guid? ActorId,
+    [param: Required] AccountStatus? Status,
+    [param: Required, MinLength(1), MaxLength(500)] string Reason
+);
+
 public sealed record UserDto(
     Guid UserId,
     string Email,
     string DisplayName,
     UserRole Role,
     AccountStatus Status,
+    long Version
+);
+
+public sealed record AccessStatusDto(
+    Guid UserId,
+    UserRole Role,
+    AccountStatus Status,
+    bool CanTrade,
     long Version
 );
 

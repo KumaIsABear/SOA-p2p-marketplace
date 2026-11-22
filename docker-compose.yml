@@ -158,6 +158,9 @@ services:
       Database__AutoMigrate: "true"
       Seed__Enabled: "true"
       Seed__DefaultPassword: "${AUTH_SEED_PASSWORD:-}"
+      ServiceAuth__AllowedCallers__gateway__Key: "${SERVICE_KEY_GATEWAY:?SERVICE_KEY_GATEWAY must be set in .env}"
+      ServiceAuth__AllowedCallers__marketplace__Key: "${SERVICE_KEY_MARKETPLACE:?SERVICE_KEY_MARKETPLACE must be set in .env}"
+      ServiceAuth__AllowedCallers__admin__Key: "${SERVICE_KEY_ADMIN:?SERVICE_KEY_ADMIN must be set in .env}"
     networks:
       - marketplace-network
     healthcheck:
