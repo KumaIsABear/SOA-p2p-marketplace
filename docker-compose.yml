@@ -1,4 +1,47 @@
 services:
+  marketplace-api:
+    build:
+      context: .
+      dockerfile: src/Services/Marketplace.API/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      sqlserver-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      rabbitmq-init:
+        condition: service_completed_successfully
+    environment:
+      ASPNETCORE_ENVIRONMENT: "Production"
+      ASPNETCORE_URLS: "http://+:8080"
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=MarketplaceWriteDb;User Id=marketplace_runtime;Password=${MARKETPLACE_DB_PASSWORD:?MARKETPLACE_DB_PASSWORD must be set in .env};Encrypt=True;TrustServerCertificate=True;"
+      ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}"
+      Database__AutoMigrate: "true"
+      Jwt__Issuer: "marketplace-auth"
+      Jwt__Audience: "marketplace-api"
+      Jwt__SigningKey: "${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set in .env}"
+      Economy__FeeBasisPoints: "500"
+      Economy__ListingLockTtlSeconds: "20"
+      InternalServices__ServiceKey: "${SERVICE_KEY_MARKETPLACE:?SERVICE_KEY_MARKETPLACE must be set in .env}"
+      InternalServices__AuthBaseUrl: "http://auth-api:8080"
+      InternalServices__InventoryBaseUrl: "http://inventory-api:8080"
+      InternalServices__AdminBaseUrl: "http://admin-api:8080"
+      InternalServices__WalletBaseUrl: "http://wallet-api:8080"
+      RabbitMq__Host: "rabbitmq"
+      RabbitMq__Port: "5672"
+      RabbitMq__VirtualHost: "marketplace"
+      RabbitMq__Username: "marketplace_service"
+      RabbitMq__Password: "${RABBITMQ_MARKETPLACE_PASSWORD:?RABBITMQ_MARKETPLACE_PASSWORD must be set in .env}"
+    networks:
+      - marketplace-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'bash -c ''exec 3<>/dev/tcp/127.0.0.1/8080 && printf "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && head -n 1 <&3 | grep -q "200"'''
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04
     restart: unless-stopped

@@ -1,4 +1,5 @@
 using Marketplace.API.Application.Options;
+using Marketplace.API.Infrastructure.Persistence;
 using Marketplace.Contracts.V1;
 using MassTransit;
 using Microsoft.Extensions.Options;
@@ -9,8 +10,7 @@ public static class MassTransitExtensions
 {
     public static IServiceCollection AddMarketplaceMessaging(
         this IServiceCollection services,
-        IConfiguration configuration
-    )
+        IConfiguration configuration)
     {
         services.AddOptions<RabbitMqOptions>()
             .Bind(configuration.GetSection(RabbitMqOptions.SectionName))
@@ -25,7 +25,13 @@ public static class MassTransitExtensions
 
         services.AddMassTransit(bus =>
         {
-            bus.SetKebabCaseEndpointNameFormatter();
+            bus.AddConsumer<ItemUnlockedEventConsumer>();
+
+            bus.AddEntityFrameworkOutbox<MarketplaceDbContext>(outbox =>
+            {
+                outbox.UseSqlServer();
+                outbox.UseBusOutbox();
+            });
 
             bus.UsingRabbitMq((context, cfg) =>
             {
@@ -37,7 +43,14 @@ public static class MassTransitExtensions
                     h.Password(options.Password);
                 });
 
-                cfg.ConfigureEndpoints(context);
+                cfg.ReceiveEndpoint(QueueNames.MarketplaceSaga, e =>
+                {
+                    e.Durable = true;
+                    e.AutoDelete = false;
+                    e.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(16), TimeSpan.FromSeconds(2)));
+                    e.UseEntityFrameworkOutbox<MarketplaceDbContext>(context);
+                    e.ConfigureConsumer<ItemUnlockedEventConsumer>(context);
+                });
             });
         });
 
