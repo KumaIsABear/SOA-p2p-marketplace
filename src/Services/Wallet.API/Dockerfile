@@ -1,9 +1,11 @@
 ﻿FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 
+COPY src/Shared/Marketplace.Contracts/Marketplace.Contracts.csproj src/Shared/Marketplace.Contracts/
 COPY src/Services/Wallet.API/Wallet.API.csproj src/Services/Wallet.API/
 RUN dotnet restore src/Services/Wallet.API/Wallet.API.csproj
 
+COPY src/Shared/Marketplace.Contracts/ src/Shared/Marketplace.Contracts/
 COPY src/Services/Wallet.API/ src/Services/Wallet.API/
 RUN dotnet publish src/Services/Wallet.API/Wallet.API.csproj -c Release -o /app/publish --no-restore
 
