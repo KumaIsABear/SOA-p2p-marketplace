@@ -35,7 +35,7 @@ jobs:
         run: dotnet test Marketplace.sln --configuration Release --no-build --verbosity normal
 
   validate-infra:
-    name: Validate Compose & Auth Image
+    name: Validate Compose & Service Images
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -49,3 +49,6 @@ jobs:
 
       - name: Build Auth.API Docker image
         run: docker build -f src/Services/Auth.API/Dockerfile -t marketplace-auth-api:ci .
+
+      - name: Build Admin.API Docker image
+        run: docker build -f src/Services/Admin.API/Dockerfile -t marketplace-admin-api:ci .
