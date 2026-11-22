@@ -13,11 +13,33 @@ namespace Marketplace.API.Controllers;
 [Authorize(Roles = "Player")]
 public sealed class ListingsController : ControllerBase
 {
-    private readonly IListingCommandService _service;
+    private readonly IListingCommandService _commandService;
+    private readonly ICatalogQueryService _catalogQueryService;
 
-    public ListingsController(IListingCommandService service)
+    public ListingsController(
+        IListingCommandService commandService,
+        ICatalogQueryService catalogQueryService)
     {
-        _service = service;
+        _commandService = commandService;
+        _catalogQueryService = catalogQueryService;
+    }
+
+    [HttpGet("listings")]
+    public async Task<ActionResult<ListingPageDto>> SearchListings(
+        [FromQuery] string? q = null,
+        [FromQuery] string? category = null,
+        [FromQuery] string? rarity = null,
+        [FromQuery] long? minPrice = null,
+        [FromQuery] long? maxPrice = null,
+        [FromQuery] string? sort = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken ct = default)
+    {
+        var userId = GetAuthenticatedUserId();
+        var result = await _catalogQueryService.SearchListingsAsync(
+            userId, q, category, rarity, minPrice, maxPrice, sort, page, pageSize, ct);
+        return Ok(result);
     }
 
     [HttpPost("listings")]
@@ -27,7 +49,7 @@ public sealed class ListingsController : ControllerBase
         CancellationToken ct)
     {
         var userId = GetAuthenticatedUserId();
-        var outcome = await _service.CreateListingAsync(userId, idempotencyKey ?? string.Empty, request, ct);
+        var outcome = await _commandService.CreateListingAsync(userId, idempotencyKey ?? string.Empty, request, ct);
 
         Response.Headers.Location = $"/api/v1/marketplace/listings/{outcome.Listing.ListingId}";
         return StatusCode(outcome.StatusCode, outcome.Listing);
@@ -39,7 +61,7 @@ public sealed class ListingsController : ControllerBase
         CancellationToken ct)
     {
         var userId = GetAuthenticatedUserId();
-        var result = await _service.CancelListingAsync(userId, listingId, ct);
+        var result = await _commandService.CancelListingAsync(userId, listingId, ct);
         return Ok(result);
     }
 
@@ -49,7 +71,7 @@ public sealed class ListingsController : ControllerBase
         CancellationToken ct)
     {
         var userId = GetAuthenticatedUserId();
-        var result = await _service.GetListingAsync(userId, listingId, ct);
+        var result = await _commandService.GetListingAsync(userId, listingId, ct);
         return Ok(result);
     }
 
@@ -72,7 +94,7 @@ public sealed class ListingsController : ControllerBase
             );
         }
 
-        var result = await _service.GetMyListingsAsync(userId, parsedStatus, page, pageSize, ct);
+        var result = await _commandService.GetMyListingsAsync(userId, parsedStatus, page, pageSize, ct);
         return Ok(result);
     }
 

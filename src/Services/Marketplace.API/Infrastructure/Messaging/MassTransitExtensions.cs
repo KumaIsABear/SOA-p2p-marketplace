@@ -26,6 +26,7 @@ public static class MassTransitExtensions
         services.AddMassTransit(bus =>
         {
             bus.AddConsumer<ItemUnlockedEventConsumer>();
+            bus.AddConsumer<ListingProjectionConsumer>();
 
             bus.AddEntityFrameworkOutbox<MarketplaceDbContext>(outbox =>
             {
@@ -50,6 +51,14 @@ public static class MassTransitExtensions
                     e.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(16), TimeSpan.FromSeconds(2)));
                     e.UseEntityFrameworkOutbox<MarketplaceDbContext>(context);
                     e.ConfigureConsumer<ItemUnlockedEventConsumer>(context);
+                });
+
+                cfg.ReceiveEndpoint(QueueNames.MarketplaceProjection, e =>
+                {
+                    e.Durable = true;
+                    e.AutoDelete = false;
+                    e.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(16), TimeSpan.FromSeconds(2)));
+                    e.ConfigureConsumer<ListingProjectionConsumer>(context);
                 });
             });
         });

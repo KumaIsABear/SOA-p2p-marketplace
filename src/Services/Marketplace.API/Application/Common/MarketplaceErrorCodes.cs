@@ -22,4 +22,6 @@ public static class MarketplaceErrorCodes
     public const string ListingNotFound = "LISTING_NOT_FOUND";
     public const string ListingBusy = "LISTING_BUSY";
     public const string ListingNotActive = "LISTING_NOT_ACTIVE";
+
+    public const string TradeNotFound = "TRADE_NOT_FOUND";
 }

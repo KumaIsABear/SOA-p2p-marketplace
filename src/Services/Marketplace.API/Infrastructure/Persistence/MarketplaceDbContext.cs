@@ -9,6 +9,7 @@ public sealed class MarketplaceDbContext : DbContext
     public MarketplaceDbContext(DbContextOptions<MarketplaceDbContext> options) : base(options) { }
 
     public DbSet<Listing> Listings => Set<Listing>();
+    public DbSet<TradeHistory> TradeHistories => Set<TradeHistory>();
     public DbSet<HttpIdempotencyRecord> HttpIdempotencyRecords => Set<HttpIdempotencyRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -28,6 +29,28 @@ public sealed class MarketplaceDbContext : DbContext
             entity.HasIndex(x => new { x.SellerId, x.Status, x.CreatedAt });
             entity.HasIndex(x => new { x.Status, x.UpdatedAt });
             entity.HasIndex(x => x.ItemId);
+        });
+
+        modelBuilder.Entity<TradeHistory>(entity =>
+        {
+            entity.ToTable("Trade_Histories");
+            entity.HasKey(x => x.TradeId);
+
+            entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(x => x.FailureCode).HasMaxLength(64);
+            entity.Property(x => x.IdempotencyKey).HasMaxLength(128).IsRequired();
+
+            entity.HasOne<Listing>()
+                .WithMany()
+                .HasForeignKey(x => x.ListingId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(x => new { x.BuyerId, x.Status, x.CreatedAt });
+            entity.HasIndex(x => new { x.SellerId, x.Status, x.CreatedAt });
+            entity.HasIndex(x => new { x.BuyerId, x.IdempotencyKey }).IsUnique();
+            entity.HasIndex(x => x.ListingId)
+                .IsUnique()
+                .HasFilter("[Status] = 'Completed'");
         });
 
         modelBuilder.Entity<HttpIdempotencyRecord>(entity =>

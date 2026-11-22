@@ -2,6 +2,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Marketplace.API.Application.Common;
+using Marketplace.API.Application.DTOs;
 using Marketplace.API.Application.Interfaces;
 using Marketplace.API.Application.Options;
 using Marketplace.API.Application.Services;
@@ -11,14 +12,15 @@ using Marketplace.API.Infrastructure.Http;
 using Marketplace.API.Infrastructure.Locking;
 using Marketplace.API.Infrastructure.Messaging;
 using Marketplace.API.Infrastructure.Persistence;
+using Marketplace.API.Infrastructure.ReadModel;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using MongoDB.Driver;
 using Prometheus;
 using StackExchange.Redis;
-using Marketplace.API.Application.DTOs;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -26,6 +28,7 @@ builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptio
 builder.Services.Configure<DatabaseOptions>(builder.Configuration.GetSection(DatabaseOptions.SectionName));
 builder.Services.Configure<EconomyOptions>(builder.Configuration.GetSection(EconomyOptions.SectionName));
 builder.Services.Configure<InternalServicesOptions>(builder.Configuration.GetSection(InternalServicesOptions.SectionName));
+builder.Services.Configure<MongoDbOptions>(builder.Configuration.GetSection(MongoDbOptions.SectionName));
 
 builder.Services.AddHttpContextAccessor();
 
@@ -38,6 +41,18 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     var config = ConfigurationOptions.Parse(redisConn);
     config.AbortOnConnectFail = false;
     return ConnectionMultiplexer.Connect(config);
+});
+
+builder.Services.AddSingleton<IMongoClient>(sp =>
+{
+    var opts = sp.GetRequiredService<IOptions<MongoDbOptions>>().Value;
+    return new MongoClient(opts.ConnectionString);
+});
+
+builder.Services.AddSingleton<IMongoDatabase>(sp =>
+{
+    var opts = sp.GetRequiredService<IOptions<MongoDbOptions>>().Value;
+    return sp.GetRequiredService<IMongoClient>().GetDatabase(opts.DatabaseName);
 });
 
 builder.Services.AddTransient<InternalServiceHeaderHandler>();
@@ -63,8 +78,11 @@ builder.Services.AddHttpClient<IPricePolicyProvider, RedisAndAdminPricePolicyPro
     client.Timeout = TimeSpan.FromSeconds(opts.TimeoutSeconds);
 }).AddHttpMessageHandler<InternalServiceHeaderHandler>();
 
+builder.Services.AddSingleton<ICatalogProjectionStore, MongoCatalogProjectionStore>();
 builder.Services.AddScoped<IDistributedListingLock, RedisDistributedListingLock>();
 builder.Services.AddScoped<IListingCommandService, ListingCommandService>();
+builder.Services.AddScoped<ICatalogQueryService, CatalogQueryService>();
+builder.Services.AddScoped<ITradeQueryService, TradeQueryService>();
 
 builder.Services.AddMarketplaceMessaging(builder.Configuration);
 
@@ -155,6 +173,9 @@ if (app.Services.GetRequiredService<IOptions<DatabaseOptions>>().Value.AutoMigra
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<MarketplaceDbContext>();
     db.Database.Migrate();
+
+    var projectionStore = scope.ServiceProvider.GetRequiredService<ICatalogProjectionStore>();
+    await projectionStore.EnsureIndexesAsync(CancellationToken.None);
 }
 
 app.UseMiddleware<CorrelationIdMiddleware>();

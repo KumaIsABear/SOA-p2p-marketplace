@@ -7,6 +7,8 @@ services:
     depends_on:
       sqlserver-init:
         condition: service_completed_successfully
+      mongodb:
+        condition: service_healthy
       redis:
         condition: service_healthy
       rabbitmq-init:
@@ -32,6 +34,9 @@ services:
       RabbitMq__VirtualHost: "marketplace"
       RabbitMq__Username: "marketplace_service"
       RabbitMq__Password: "${RABBITMQ_MARKETPLACE_PASSWORD:?RABBITMQ_MARKETPLACE_PASSWORD must be set in .env}"
+      MongoDb__ConnectionString: "mongodb://marketplace_runtime:${MONGO_MARKETPLACE_PASSWORD:?MONGO_MARKETPLACE_PASSWORD must be set in .env}@mongodb:27017/MarketplaceReadDb?authSource=MarketplaceReadDb"
+      MongoDb__DatabaseName: "MarketplaceReadDb"
+      MongoDb__CatalogCollectionName: "Marketplace_Catalog"
     networks:
       - marketplace-network
     healthcheck:

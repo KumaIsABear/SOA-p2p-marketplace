@@ -31,3 +31,11 @@ public sealed class InternalServicesOptions
     public string WalletBaseUrl { get; init; } = "http://wallet-api:8080";
     public int TimeoutSeconds { get; init; } = 10;
 }
+
+public sealed class MongoDbOptions
+{
+    public const string SectionName = "MongoDb";
+    public string ConnectionString { get; init; } = string.Empty;
+    public string DatabaseName { get; init; } = "MarketplaceReadDb";
+    public string CatalogCollectionName { get; init; } = "Marketplace_Catalog";
+}
