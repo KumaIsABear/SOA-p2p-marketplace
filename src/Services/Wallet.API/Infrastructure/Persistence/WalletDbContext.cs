@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using MassTransit;
+using Microsoft.EntityFrameworkCore;
 using Wallet.API.Domain.Entities;
 
 namespace Wallet.API.Infrastructure.Persistence;
@@ -15,10 +16,14 @@ public sealed class WalletDbContext : DbContext
     public DbSet<WalletTransaction> WalletTransactions => Set<WalletTransaction>();
     public DbSet<TopUpOrder> TopUpOrders => Set<TopUpOrder>();
     public DbSet<HttpIdempotencyRecord> HttpIdempotencyRecords => Set<HttpIdempotencyRecord>();
+    public DbSet<WalletOperationRejection> WalletOperationRejections => Set<WalletOperationRejection>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(WalletDbContext).Assembly);
+        modelBuilder.AddInboxStateEntity();
+        modelBuilder.AddOutboxMessageEntity();
+        modelBuilder.AddOutboxStateEntity();
     }
 }

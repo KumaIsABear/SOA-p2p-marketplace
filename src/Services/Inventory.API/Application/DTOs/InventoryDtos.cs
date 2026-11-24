@@ -60,3 +60,13 @@ public sealed record ItemLockStatusDto(
     Guid? ItemId,
     ItemLockLookupStatus Status
 );
+
+public sealed record ItemTransferTraceDto(
+    Guid TradeId,
+    Guid ItemId,
+    Guid SellerId,
+    Guid BuyerId,
+    int Quantity,
+    ItemTransferStatus Status,
+    DateTimeOffset UpdatedAt
+);

@@ -15,6 +15,7 @@ public static class InventoryErrorCodes
     public const string IdempotencyConflict = "IDEMPOTENCY_CONFLICT";
     public const string ItemLockMismatch = "ITEM_LOCK_MISMATCH";
     public const string TransferPending = "TRANSFER_PENDING";
+    public const string TransferNotFound = "TRANSFER_NOT_FOUND";
     public const string DependencyUnavailable = "DEPENDENCY_UNAVAILABLE";
     public const string InternalError = "INTERNAL_ERROR";
 }

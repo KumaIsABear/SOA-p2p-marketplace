@@ -75,4 +75,14 @@ public sealed class InternalInventoryController : ControllerBase
         var result = await _inventoryService.GetLockStatusAsync(listingId, cancellationToken);
         return Ok(result);
     }
+
+    [HttpGet("trades/{tradeId:guid}/trace")]
+    [RequireServiceCaller("admin", "marketplace")]
+    public async Task<ActionResult<ItemTransferTraceDto>> GetTradeTransferTrace(
+        [FromRoute] Guid tradeId,
+        CancellationToken cancellationToken)
+    {
+        var result = await _inventoryService.GetTradeTransferTraceAsync(tradeId, cancellationToken);
+        return Ok(result);
+    }
 }

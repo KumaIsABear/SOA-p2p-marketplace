@@ -22,4 +22,6 @@ public interface IInventoryService
         CancellationToken cancellationToken = default);
 
     Task<ItemLockStatusDto> GetLockStatusAsync(Guid listingId, CancellationToken cancellationToken = default);
+
+    Task<ItemTransferTraceDto> GetTradeTransferTraceAsync(Guid tradeId, CancellationToken cancellationToken = default);
 }

@@ -9,6 +9,7 @@ using Prometheus;
 using Wallet.API.Application.Services;
 using Wallet.API.Domain.Errors;
 using Wallet.API.Infrastructure.Http;
+using Wallet.API.Infrastructure.Messaging;
 using Wallet.API.Infrastructure.Options;
 using Wallet.API.Infrastructure.Persistence;
 
@@ -17,6 +18,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<DatabaseOptions>(builder.Configuration.GetSection(DatabaseOptions.SectionName));
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
 builder.Services.Configure<ServiceAuthOptions>(builder.Configuration.GetSection(ServiceAuthOptions.SectionName));
+builder.Services.Configure<RabbitMqOptions>(builder.Configuration.GetSection(RabbitMqOptions.SectionName));
 builder.Services.Configure<TopUpPackagesOptions>(builder.Configuration.GetSection(TopUpPackagesOptions.SectionName));
 
 var topUpPackagesOptions = builder.Configuration
@@ -87,6 +89,8 @@ builder.Services.AddAuthorization(options =>
 });
 
 builder.Services.AddScoped<IWalletQueryService, WalletQueryService>();
+builder.Services.AddScoped<IWalletSagaService, WalletSagaService>();
+builder.Services.AddWalletMessaging(builder.Configuration);
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>

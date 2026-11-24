@@ -715,4 +715,37 @@ public sealed class InventoryService : IInventoryService
     {
         return ex.InnerException is SqlException sqlEx && sqlEx.Number is 2601 or 2627;
     }
+    public async Task<ItemTransferTraceDto> GetTradeTransferTraceAsync(
+        Guid tradeId,
+        CancellationToken cancellationToken = default)
+    {
+        if (tradeId == Guid.Empty)
+        {
+            throw new InventoryApiException(
+                StatusCodes.Status404NotFound,
+                InventoryErrorCodes.TransferNotFound,
+                "Item transfer record was not found.");
+        }
+
+        var transfer = await _dbContext.ItemTransfers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TradeId == tradeId, cancellationToken);
+
+        if (transfer is null)
+        {
+            throw new InventoryApiException(
+                StatusCodes.Status404NotFound,
+                InventoryErrorCodes.TransferNotFound,
+                "Item transfer record was not found.");
+        }
+
+        return new ItemTransferTraceDto(
+            transfer.TradeId,
+            transfer.ItemId,
+            transfer.SellerId,
+            transfer.BuyerId,
+            transfer.Quantity,
+            transfer.Status,
+            transfer.UpdatedAt);
+    }
 }

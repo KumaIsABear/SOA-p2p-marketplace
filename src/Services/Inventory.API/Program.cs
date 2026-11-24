@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Inventory.API.Application.Services;
 using Inventory.API.Domain.Errors;
 using Inventory.API.Infrastructure.Http;
+using Inventory.API.Infrastructure.Messaging;
 using Inventory.API.Infrastructure.Options;
 using Inventory.API.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -75,6 +76,8 @@ builder.Services
 
 builder.Services.AddAuthorization();
 builder.Services.AddScoped<IInventoryService, InventoryService>();
+builder.Services.AddScoped<IInventorySagaService, InventorySagaService>();
+builder.Services.AddInventoryMassTransit(builder.Configuration);
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>

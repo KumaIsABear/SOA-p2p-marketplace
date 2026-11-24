@@ -1,4 +1,5 @@
 ﻿using Inventory.API.Infrastructure.Persistence;
+using MassTransit;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Inventory.API.Controllers;
@@ -8,10 +9,12 @@ namespace Inventory.API.Controllers;
 public sealed class HealthController : ControllerBase
 {
     private readonly InventoryDbContext _dbContext;
+    private readonly IBusControl _busControl;
 
-    public HealthController(InventoryDbContext dbContext)
+    public HealthController(InventoryDbContext dbContext, IBusControl busControl)
     {
         _dbContext = dbContext;
+        _busControl = busControl;
     }
 
     [HttpGet("live")]
@@ -23,7 +26,9 @@ public sealed class HealthController : ControllerBase
         try
         {
             var canConnect = await _dbContext.Database.CanConnectAsync(cancellationToken);
-            if (!canConnect)
+            var busHealth = _busControl.CheckHealth();
+
+            if (!canConnect || busHealth.Status != BusHealthStatus.Healthy)
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, new { status = "Unhealthy" });
             }
