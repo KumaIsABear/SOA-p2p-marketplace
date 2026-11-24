@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Marketplace.API.Infrastructure.Persistence;
 
-public sealed class MarketplaceDbContext : DbContext
+public class MarketplaceDbContext : DbContext
 {
     public MarketplaceDbContext(DbContextOptions<MarketplaceDbContext> options) : base(options) { }
 

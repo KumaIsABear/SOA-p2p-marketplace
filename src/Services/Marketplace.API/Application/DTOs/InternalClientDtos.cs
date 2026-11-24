@@ -61,3 +61,40 @@ public sealed record LockCallResult(
     string? ErrorCode = null,
     string? ErrorDetail = null
 );
+
+public sealed record ItemTransferTraceDto(
+    Guid TradeId,
+    Guid ItemId,
+    Guid SellerId,
+    Guid BuyerId,
+    int Quantity,
+    string Status,
+    DateTimeOffset UpdatedAt
+);
+
+public sealed record FundHoldDto(
+    Guid TradeId,
+    Guid BuyerId,
+    long Amount,
+    string Status,
+    DateTimeOffset UpdatedAt
+);
+
+public sealed record WalletTransactionTraceDto(
+    Guid EntryId,
+    Guid UserId,
+    Guid? TradeId,
+    Guid? TopUpId,
+    long TotalDelta,
+    long HoldDelta,
+    long? FeeGem,
+    string Type,
+    DateTimeOffset CreatedAt
+);
+
+public sealed record WalletTradeTraceDto(
+    Guid TradeId,
+    FundHoldDto? Hold,
+    string SettlementStatus,
+    IReadOnlyList<WalletTransactionTraceDto> Entries
+);

@@ -92,6 +92,45 @@ public sealed class InventoryClient : IInventoryClient
         }
     }
 
+    public async Task<ItemLockStatusDto?> GetLockStatusAsync(Guid listingId, CancellationToken ct)
+    {
+        try
+        {
+            using var response = await _http.GetAsync($"/internal/v1/inventory/locks/{listingId}", ct);
+
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            return await response.Content.ReadFromJsonAsync<ItemLockStatusDto>(JsonOptions, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "INV-I05 lock status query failed for listing {ListingId}.", listingId);
+            return null;
+        }
+    }
+
+    public async Task<ItemTransferTraceDto?> GetTransferTraceAsync(Guid tradeId, CancellationToken ct)
+    {
+        try
+        {
+            using var response = await _http.GetAsync($"/internal/v1/inventory/trades/{tradeId}/trace", ct);
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                return null;
+
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            return await response.Content.ReadFromJsonAsync<ItemTransferTraceDto>(JsonOptions, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "INV-I06 transfer trace query failed for trade {TradeId}.", tradeId);
+            return null;
+        }
+    }
+
     private static async Task<ApiProblemDetails?> TryReadProblemAsync(HttpResponseMessage response, CancellationToken ct)
     {
         try

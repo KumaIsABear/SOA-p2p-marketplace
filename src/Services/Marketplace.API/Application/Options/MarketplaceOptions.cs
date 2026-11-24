@@ -52,3 +52,14 @@ public sealed class ServiceAuthOptions
     public Dictionary<string, AllowedCallerOptions> AllowedCallers { get; init; } =
         new(StringComparer.OrdinalIgnoreCase);
 }
+
+public sealed class RecoveryOptions
+{
+    public const string SectionName = "Recovery";
+
+    public int PollIntervalSeconds { get; init; } = 10;
+    public int PendingLockGraceSeconds { get; init; } = 30;
+    public int SagaStaleSeconds { get; init; } = 30;
+    public int MaxSagaRetries { get; init; } = 5;
+    public int BatchSize { get; init; } = 20;
+}

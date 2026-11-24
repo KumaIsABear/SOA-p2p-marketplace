@@ -21,6 +21,7 @@ using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
 using Prometheus;
 using StackExchange.Redis;
+using Marketplace.API.Infrastructure.Background;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -30,6 +31,7 @@ builder.Services.Configure<EconomyOptions>(builder.Configuration.GetSection(Econ
 builder.Services.Configure<InternalServicesOptions>(builder.Configuration.GetSection(InternalServicesOptions.SectionName));
 builder.Services.Configure<MongoDbOptions>(builder.Configuration.GetSection(MongoDbOptions.SectionName));
 builder.Services.Configure<ServiceAuthOptions>(builder.Configuration.GetSection(ServiceAuthOptions.SectionName));
+builder.Services.Configure<RecoveryOptions>(builder.Configuration.GetSection(RecoveryOptions.SectionName));
 
 builder.Services.AddHttpContextAccessor();
 
@@ -79,6 +81,13 @@ builder.Services.AddHttpClient<IPricePolicyProvider, RedisAndAdminPricePolicyPro
     client.Timeout = TimeSpan.FromSeconds(opts.TimeoutSeconds);
 }).AddHttpMessageHandler<InternalServiceHeaderHandler>();
 
+builder.Services.AddHttpClient<IWalletClient, WalletClient>((sp, client) =>
+{
+    var opts = sp.GetRequiredService<IOptions<InternalServicesOptions>>().Value;
+    client.BaseAddress = new Uri(opts.WalletBaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(5);
+}).AddHttpMessageHandler<InternalServiceHeaderHandler>();
+
 builder.Services.AddSingleton<ICatalogProjectionStore, MongoCatalogProjectionStore>();
 builder.Services.AddScoped<IDistributedListingLock, RedisDistributedListingLock>();
 builder.Services.AddScoped<IListingCommandService, ListingCommandService>();
@@ -86,6 +95,8 @@ builder.Services.AddScoped<ICatalogQueryService, CatalogQueryService>();
 builder.Services.AddScoped<ITradeQueryService, TradeQueryService>();
 builder.Services.AddScoped<IPurchaseService, PurchaseService>();
 builder.Services.AddScoped<IInternalMarketplaceService, InternalMarketplaceService>();
+builder.Services.AddScoped<IListingRecoveryService, ListingRecoveryService>();
+builder.Services.AddHostedService<ListingRecoveryWorker>();
 
 builder.Services.AddMarketplaceMessaging(builder.Configuration);
 
