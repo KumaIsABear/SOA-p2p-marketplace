@@ -1,4 +1,5 @@
 ﻿using Inventory.API.Domain.Entities;
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 
 namespace Inventory.API.Infrastructure.Persistence;
@@ -15,10 +16,15 @@ public sealed class InventoryDbContext : DbContext
     public DbSet<ItemLock> ItemLocks => Set<ItemLock>();
     public DbSet<ItemTransfer> ItemTransfers => Set<ItemTransfer>();
     public DbSet<HttpIdempotencyRecord> HttpIdempotencyRecords => Set<HttpIdempotencyRecord>();
+    public DbSet<InventoryOperationRejection> InventoryOperationRejections => Set<InventoryOperationRejection>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(InventoryDbContext).Assembly);
+
+        modelBuilder.AddInboxStateEntity();
+        modelBuilder.AddOutboxMessageEntity();
+        modelBuilder.AddOutboxStateEntity();
     }
 }

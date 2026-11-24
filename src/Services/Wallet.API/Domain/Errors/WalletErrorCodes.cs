@@ -13,4 +13,11 @@ public static class WalletErrorCodes
     public const string IdempotencyConflict = "IDEMPOTENCY_CONFLICT";
     public const string PaymentCreateRejected = "PAYMENT_CREATE_REJECTED";
     public const string InsufficientFunds = "INSUFFICIENT_FUNDS";
+    public const string InvalidAmount = "INVALID_AMOUNT";
+    public const string SelfPurchase = "SELF_PURCHASE";
+    public const string InvalidSettlementAmounts = "INVALID_SETTLEMENT_AMOUNTS";
+    public const string HoldNotFound = "HOLD_NOT_FOUND";
+    public const string HoldMismatch = "HOLD_MISMATCH";
+    public const string HoldAlreadyReleased = "HOLD_ALREADY_RELEASED";
+    public const string HoldInvalidStatus = "HOLD_INVALID_STATUS";
 }
