@@ -24,4 +24,6 @@ public static class MarketplaceErrorCodes
     public const string ListingNotActive = "LISTING_NOT_ACTIVE";
 
     public const string TradeNotFound = "TRADE_NOT_FOUND";
+    public const string SelfPurchase = "SELF_PURCHASE";
+    public const string TradeFailed = "TRADE_FAILED";
 }

@@ -15,13 +15,16 @@ public sealed class ListingsController : ControllerBase
 {
     private readonly IListingCommandService _commandService;
     private readonly ICatalogQueryService _catalogQueryService;
+    private readonly IPurchaseService _purchaseService;
 
     public ListingsController(
         IListingCommandService commandService,
-        ICatalogQueryService catalogQueryService)
+        ICatalogQueryService catalogQueryService,
+        IPurchaseService purchaseService)
     {
         _commandService = commandService;
         _catalogQueryService = catalogQueryService;
+        _purchaseService = purchaseService;
     }
 
     [HttpGet("listings")]
@@ -63,6 +66,19 @@ public sealed class ListingsController : ControllerBase
         var userId = GetAuthenticatedUserId();
         var result = await _commandService.CancelListingAsync(userId, listingId, ct);
         return Ok(result);
+    }
+
+    [HttpPost("listings/{listingId:guid}/purchase")]
+    public async Task<IActionResult> PurchaseListing(
+        [FromRoute] Guid listingId,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        CancellationToken ct)
+    {
+        var buyerId = GetAuthenticatedUserId();
+        var result = await _purchaseService.PurchaseListingAsync(buyerId, listingId, idempotencyKey ?? string.Empty, ct);
+
+        Response.Headers.Location = result.StatusUrl;
+        return StatusCode(StatusCodes.Status202Accepted, result);
     }
 
     [HttpGet("listings/{listingId:guid}")]

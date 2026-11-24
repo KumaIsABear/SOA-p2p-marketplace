@@ -158,6 +158,39 @@ namespace Marketplace.API.Infrastructure.Persistence.Migrations
                     b.ToTable("Listings", (string)null);
                 });
 
+            modelBuilder.Entity("Marketplace.API.Domain.Entities.SagaStep", b =>
+                {
+                    b.Property<Guid>("StepId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("At")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("Step")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<Guid>("TradeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("StepId");
+
+                    b.HasIndex("TradeId", "At");
+
+                    b.ToTable("Saga_Steps", (string)null);
+                });
+
             modelBuilder.Entity("Marketplace.API.Domain.Entities.TradeHistory", b =>
                 {
                     b.Property<Guid>("TradeId")
@@ -234,6 +267,76 @@ namespace Marketplace.API.Infrastructure.Persistence.Migrations
                     b.HasIndex("SellerId", "Status", "CreatedAt");
 
                     b.ToTable("Trade_Histories", (string)null);
+                });
+
+            modelBuilder.Entity("Marketplace.API.Domain.Entities.TradeSagaState", b =>
+                {
+                    b.Property<Guid>("CorrelationId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("BuyerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CurrentOperationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("CurrentState")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<long>("FeeGem")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("GrossGem")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ItemId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ListingId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("RequiresReview")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("RetryCount")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("SellerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("SellerNetGem")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("TemplateId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("TradeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("UnitPrice")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.HasKey("CorrelationId");
+
+                    b.HasIndex("TradeId")
+                        .IsUnique();
+
+                    b.HasIndex("CurrentState", "UpdatedAt");
+
+                    b.ToTable("Saga_States", (string)null);
                 });
 
             modelBuilder.Entity("MassTransit.EntityFrameworkCoreIntegration.InboxState", b =>
@@ -406,11 +509,29 @@ namespace Marketplace.API.Infrastructure.Persistence.Migrations
                     b.ToTable("OutboxState");
                 });
 
+            modelBuilder.Entity("Marketplace.API.Domain.Entities.SagaStep", b =>
+                {
+                    b.HasOne("Marketplace.API.Domain.Entities.TradeHistory", null)
+                        .WithMany()
+                        .HasForeignKey("TradeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Marketplace.API.Domain.Entities.TradeHistory", b =>
                 {
                     b.HasOne("Marketplace.API.Domain.Entities.Listing", null)
                         .WithMany()
                         .HasForeignKey("ListingId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Marketplace.API.Domain.Entities.TradeSagaState", b =>
+                {
+                    b.HasOne("Marketplace.API.Domain.Entities.TradeHistory", null)
+                        .WithOne()
+                        .HasForeignKey("Marketplace.API.Domain.Entities.TradeSagaState", "TradeId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

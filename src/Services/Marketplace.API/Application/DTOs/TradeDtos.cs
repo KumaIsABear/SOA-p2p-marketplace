@@ -48,3 +48,31 @@ public sealed record TradePageDto(
     int PageSize,
     long TotalCount
 );
+
+public sealed record PurchaseAcceptedDto(
+    Guid TradeId,
+    Guid ListingId,
+    TradeStatus Status,
+    long GrossGem,
+    long FeeGem,
+    long SellerNetGem,
+    string StatusUrl
+);
+
+public sealed record SagaStepDto(
+    string Step,
+    string Outcome,
+    DateTimeOffset At,
+    string? ErrorCode
+);
+
+public sealed record MarketTradeTraceDto(
+    TradeDto Trade,
+    Guid CorrelationId,
+    IReadOnlyList<SagaStepDto> Steps
+);
+
+public sealed record MarketListingStatsDto(
+    long ActiveListingCount,
+    DateTimeOffset AsOf
+);

@@ -10,6 +10,8 @@ public sealed class MarketplaceDbContext : DbContext
 
     public DbSet<Listing> Listings => Set<Listing>();
     public DbSet<TradeHistory> TradeHistories => Set<TradeHistory>();
+    public DbSet<TradeSagaState> SagaStates => Set<TradeSagaState>();
+    public DbSet<SagaStep> SagaSteps => Set<SagaStep>();
     public DbSet<HttpIdempotencyRecord> HttpIdempotencyRecords => Set<HttpIdempotencyRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -51,6 +53,40 @@ public sealed class MarketplaceDbContext : DbContext
             entity.HasIndex(x => x.ListingId)
                 .IsUnique()
                 .HasFilter("[Status] = 'Completed'");
+        });
+
+        modelBuilder.Entity<TradeSagaState>(entity =>
+        {
+            entity.ToTable("Saga_States");
+            entity.HasKey(x => x.CorrelationId);
+
+            entity.Property(x => x.CurrentState).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.FailureReason).HasMaxLength(128);
+
+            entity.HasOne<TradeHistory>()
+                .WithOne()
+                .HasForeignKey<TradeSagaState>(x => x.TradeId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(x => x.TradeId).IsUnique();
+            entity.HasIndex(x => new { x.CurrentState, x.UpdatedAt });
+        });
+
+        modelBuilder.Entity<SagaStep>(entity =>
+        {
+            entity.ToTable("Saga_Steps");
+            entity.HasKey(x => x.StepId);
+
+            entity.Property(x => x.Step).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Outcome).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.ErrorCode).HasMaxLength(64);
+
+            entity.HasOne<TradeHistory>()
+                .WithMany()
+                .HasForeignKey(x => x.TradeId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(x => new { x.TradeId, x.At });
         });
 
         modelBuilder.Entity<HttpIdempotencyRecord>(entity =>

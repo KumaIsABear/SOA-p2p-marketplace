@@ -37,6 +37,7 @@ services:
       MongoDb__ConnectionString: "mongodb://marketplace_runtime:${MONGO_MARKETPLACE_PASSWORD:?MONGO_MARKETPLACE_PASSWORD must be set in .env}@mongodb:27017/MarketplaceReadDb?authSource=MarketplaceReadDb"
       MongoDb__DatabaseName: "MarketplaceReadDb"
       MongoDb__CatalogCollectionName: "Marketplace_Catalog"
+      ServiceAuth__AllowedCallers__admin__Key: "${SERVICE_KEY_ADMIN:?SERVICE_KEY_ADMIN must be set in .env}"
     networks:
       - marketplace-network
     healthcheck:

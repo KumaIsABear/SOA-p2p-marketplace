@@ -39,3 +39,16 @@ public sealed class MongoDbOptions
     public string DatabaseName { get; init; } = "MarketplaceReadDb";
     public string CatalogCollectionName { get; init; } = "Marketplace_Catalog";
 }
+
+public sealed class AllowedCallerOptions
+{
+    public string Key { get; init; } = string.Empty;
+}
+
+public sealed class ServiceAuthOptions
+{
+    public const string SectionName = "ServiceAuth";
+
+    public Dictionary<string, AllowedCallerOptions> AllowedCallers { get; init; } =
+        new(StringComparer.OrdinalIgnoreCase);
+}

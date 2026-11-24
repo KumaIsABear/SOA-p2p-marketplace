@@ -29,6 +29,7 @@ builder.Services.Configure<DatabaseOptions>(builder.Configuration.GetSection(Dat
 builder.Services.Configure<EconomyOptions>(builder.Configuration.GetSection(EconomyOptions.SectionName));
 builder.Services.Configure<InternalServicesOptions>(builder.Configuration.GetSection(InternalServicesOptions.SectionName));
 builder.Services.Configure<MongoDbOptions>(builder.Configuration.GetSection(MongoDbOptions.SectionName));
+builder.Services.Configure<ServiceAuthOptions>(builder.Configuration.GetSection(ServiceAuthOptions.SectionName));
 
 builder.Services.AddHttpContextAccessor();
 
@@ -83,6 +84,8 @@ builder.Services.AddScoped<IDistributedListingLock, RedisDistributedListingLock>
 builder.Services.AddScoped<IListingCommandService, ListingCommandService>();
 builder.Services.AddScoped<ICatalogQueryService, CatalogQueryService>();
 builder.Services.AddScoped<ITradeQueryService, TradeQueryService>();
+builder.Services.AddScoped<IPurchaseService, PurchaseService>();
+builder.Services.AddScoped<IInternalMarketplaceService, InternalMarketplaceService>();
 
 builder.Services.AddMarketplaceMessaging(builder.Configuration);
 

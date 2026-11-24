@@ -1,4 +1,5 @@
 using Marketplace.API.Application.Options;
+using Marketplace.API.Domain.Entities;
 using Marketplace.API.Infrastructure.Persistence;
 using Marketplace.Contracts.V1;
 using MassTransit;
@@ -28,6 +29,13 @@ public static class MassTransitExtensions
             bus.AddConsumer<ItemUnlockedEventConsumer>();
             bus.AddConsumer<ListingProjectionConsumer>();
 
+            bus.AddSagaStateMachine<TradeSagaStateMachine, TradeSagaState>()
+                .EntityFrameworkRepository(r =>
+                {
+                    r.ExistingDbContext<MarketplaceDbContext>();
+                    r.UseSqlServer();
+                });
+
             bus.AddEntityFrameworkOutbox<MarketplaceDbContext>(outbox =>
             {
                 outbox.UseSqlServer();
@@ -51,6 +59,7 @@ public static class MassTransitExtensions
                     e.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(16), TimeSpan.FromSeconds(2)));
                     e.UseEntityFrameworkOutbox<MarketplaceDbContext>(context);
                     e.ConfigureConsumer<ItemUnlockedEventConsumer>(context);
+                    e.ConfigureSaga<TradeSagaState>(context);
                 });
 
                 cfg.ReceiveEndpoint(QueueNames.MarketplaceProjection, e =>
