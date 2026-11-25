@@ -132,6 +132,22 @@ public sealed class AuthService : IAuthService {
                 return AuthResult<TokenResponse>.Success(response);
             } catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex)) {
                 await transaction.RollbackAsync(cancellationToken);
+                _db.ChangeTracker.Clear();
+
+                var racedIdentity = await _db.ExternalIdentities
+                    .Include(ei => ei.User)
+                    .FirstOrDefaultAsync(ei => ei.Provider == provider && ei.ProviderSubject == subject, cancellationToken);
+
+                if (racedIdentity is not null) {
+                    if (racedIdentity.User.Status == AccountStatus.Banned) {
+                        return AuthResult<TokenResponse>.Failure(AuthErrors.AccountBanned());
+                    }
+
+                    var racedResponse = IssueTokens(racedIdentity.User, now);
+                    await _db.SaveChangesAsync(cancellationToken);
+                    return AuthResult<TokenResponse>.Success(racedResponse);
+                }
+
                 return AuthResult<TokenResponse>.Failure(AuthErrors.IdentityConflict());
             }
         });
