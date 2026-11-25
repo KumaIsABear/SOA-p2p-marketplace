@@ -52,3 +52,6 @@ jobs:
 
       - name: Build Admin.API Docker image
         run: docker build -f src/Services/Admin.API/Dockerfile -t marketplace-admin-api:ci .
+
+      - name: Build Gateway.API Docker image
+        run: docker build -f src/Gateway/Gateway.API/Dockerfile -t marketplace-gateway-api:ci .
