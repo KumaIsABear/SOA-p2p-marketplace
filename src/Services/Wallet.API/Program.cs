@@ -8,9 +8,12 @@ using Microsoft.IdentityModel.Tokens;
 using Prometheus;
 using Wallet.API.Application.Services;
 using Wallet.API.Domain.Errors;
+using Wallet.API.Infrastructure.BackgroundServices;
 using Wallet.API.Infrastructure.Http;
 using Wallet.API.Infrastructure.Messaging;
+using Wallet.API.Infrastructure.Metrics;
 using Wallet.API.Infrastructure.Options;
+using Wallet.API.Infrastructure.Payments;
 using Wallet.API.Infrastructure.Persistence;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -20,6 +23,7 @@ builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptio
 builder.Services.Configure<ServiceAuthOptions>(builder.Configuration.GetSection(ServiceAuthOptions.SectionName));
 builder.Services.Configure<RabbitMqOptions>(builder.Configuration.GetSection(RabbitMqOptions.SectionName));
 builder.Services.Configure<TopUpPackagesOptions>(builder.Configuration.GetSection(TopUpPackagesOptions.SectionName));
+builder.Services.Configure<ZaloPayOptions>(builder.Configuration.GetSection(ZaloPayOptions.SectionName));
 
 var topUpPackagesOptions = builder.Configuration
     .GetSection(TopUpPackagesOptions.SectionName)
@@ -88,8 +92,17 @@ builder.Services.AddAuthorization(options =>
     });
 });
 
+builder.Services.AddSingleton<IWalletMetrics, WalletMetrics>();
+builder.Services.AddHttpClient<IZaloPayClient, ZaloPayClient>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
+
 builder.Services.AddScoped<IWalletQueryService, WalletQueryService>();
 builder.Services.AddScoped<IWalletSagaService, WalletSagaService>();
+builder.Services.AddScoped<ITopUpSettlementService, TopUpSettlementService>();
+builder.Services.AddScoped<IWalletTopUpService, WalletTopUpService>();
+builder.Services.AddHostedService<PaymentReconciliationWorker>();
 builder.Services.AddWalletMessaging(builder.Configuration);
 
 builder.Services.AddControllers()

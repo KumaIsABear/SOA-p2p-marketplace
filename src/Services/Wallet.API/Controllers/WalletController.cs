@@ -14,10 +14,14 @@ namespace Wallet.API.Controllers;
 public sealed class WalletController : ControllerBase
 {
     private readonly IWalletQueryService _walletQueryService;
+    private readonly IWalletTopUpService _walletTopUpService;
 
-    public WalletController(IWalletQueryService walletQueryService)
+    public WalletController(
+        IWalletQueryService walletQueryService,
+        IWalletTopUpService walletTopUpService)
     {
         _walletQueryService = walletQueryService;
+        _walletTopUpService = walletTopUpService;
     }
 
     [HttpGet("balance")]
@@ -43,6 +47,33 @@ public sealed class WalletController : ControllerBase
     {
         var packages = _walletQueryService.GetTopUpPackages();
         return Ok(packages);
+    }
+
+    [HttpPost("top-ups")]
+    public async Task<ActionResult<TopUpOrderResponse>> CreateTopUp(
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        [FromBody] CreateTopUpRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        var result = await _walletTopUpService.CreateTopUpAsync(
+            userId,
+            idempotencyKey,
+            request,
+            cancellationToken);
+
+        Response.Headers.Location = result.Location;
+        return StatusCode(result.StatusCode, result.Order);
+    }
+
+    [HttpGet("top-ups/{topUpId}")]
+    public async Task<ActionResult<TopUpOrderResponse>> GetTopUp(
+        Guid topUpId,
+        CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        var order = await _walletTopUpService.GetTopUpByIdAsync(userId, topUpId, cancellationToken);
+        return Ok(order);
     }
 
     private Guid GetCurrentUserId()
