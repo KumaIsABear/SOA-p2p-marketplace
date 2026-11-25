@@ -30,6 +30,25 @@ public sealed class PriceCalculatorTests
         Assert.Equal(amounts.GrossGem, amounts.FeeGem + amounts.SellerNetGem);
     }
 
+    [Theory]
+    [InlineData(799, false)]
+    [InlineData(800, true)]
+    [InlineData(1200, true)]
+    [InlineData(1201, false)]
+    public void UT01_IsWithinBounds_AcceptsInclusiveBoundsAndRejectsOutside(long unitPrice, bool expected)
+    {
+        Assert.Equal(expected, PriceCalculator.IsWithinBounds(unitPrice, 800, 1200));
+    }
+
+    [Theory]
+    [InlineData(1000, 0)]
+    [InlineData(1000, -1)]
+    [InlineData(0, 1)]
+    public void UT02_ComputeTradeAmounts_RejectsNonPositiveUnitPriceOrQuantity(long unitPrice, int quantity)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => PriceCalculator.ComputeTradeAmounts(unitPrice, quantity, 500));
+    }
+
     [Fact]
     public void ComputeTradeAmounts_ThrowsOnOverflow()
     {

@@ -6,16 +6,12 @@ using Marketplace.Contracts.V1;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using Marketplace.API.Domain.Services;
 
 namespace Marketplace.API.Infrastructure.ReadModel;
 
 public sealed class MongoCatalogProjectionStore : ICatalogProjectionStore
 {
-    private static readonly string[] TerminalStatuses =
-    [
-        nameof(ListingStatus.Sold),
-        nameof(ListingStatus.Cancelled)
-    ];
 
     private readonly IMongoCollection<CatalogListingDocument> _collection;
     private readonly ILogger<MongoCatalogProjectionStore> _logger;
@@ -50,7 +46,7 @@ public sealed class MongoCatalogProjectionStore : ICatalogProjectionStore
         var filter = Builders<CatalogListingDocument>.Filter.And(
             Builders<CatalogListingDocument>.Filter.Eq(x => x.Id, id),
             Builders<CatalogListingDocument>.Filter.Lt(x => x.Version, snapshot.Version),
-            Builders<CatalogListingDocument>.Filter.Nin(x => x.Status, TerminalStatuses)
+            Builders<CatalogListingDocument>.Filter.Nin(x => x.Status, CatalogProjectionGuard.TerminalStatusNames)
         );
 
         var update = Builders<CatalogListingDocument>.Update
