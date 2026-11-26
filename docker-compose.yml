@@ -231,6 +231,8 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+      rabbitmq-init:
+        condition: service_completed_successfully
     environment:
       ASPNETCORE_ENVIRONMENT: "Production"
       ASPNETCORE_URLS: "http://+:8080"
@@ -239,10 +241,22 @@ services:
       Jwt__Audience: "marketplace-api"
       Jwt__SigningKey: "${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set in .env}"
       Redis__ConnectionString: "redis:6379,password=${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}"
+      RabbitMq__Host: "rabbitmq"
+      RabbitMq__Port: "5672"
+      RabbitMq__VirtualHost: "marketplace"
+      RabbitMq__Username: "admin_service"
+      RabbitMq__Password: "${RABBITMQ_ADMIN_PASSWORD:?RABBITMQ_ADMIN_PASSWORD must be set in .env}"
       Economy__DefaultBandBps: "2000"
       Analytics__TimeZoneId: "Asia/Ho_Chi_Minh"
+      Analytics__DailySummaryTime: "00:00"
+      Services__Auth__BaseUrl: "http://auth-api:8080"
+      Services__Wallet__BaseUrl: "http://wallet-api:8080"
+      Services__Inventory__BaseUrl: "http://inventory-api:8080"
+      Services__Marketplace__BaseUrl: "http://marketplace-api:8080"
+      Services__TimeoutSeconds: "5"
       Database__AutoMigrate: "true"
       Seed__Enabled: "true"
+      ServiceAuth__OutgoingKey: "${SERVICE_KEY_ADMIN:?SERVICE_KEY_ADMIN must be set in .env}"
       ServiceAuth__AllowedCallers__marketplace__Key: "${SERVICE_KEY_MARKETPLACE:?SERVICE_KEY_MARKETPLACE must be set in .env}"
     networks:
       - marketplace-network

@@ -6,7 +6,10 @@ using Admin.API.Application.DTOs;
 using Admin.API.Application.Interfaces;
 using Admin.API.Application.Options;
 using Admin.API.Application.Services;
+using Admin.API.Infrastructure.Background;
 using Admin.API.Infrastructure.Caching;
+using Admin.API.Infrastructure.Clients;
+using Admin.API.Infrastructure.Messaging;
 using Admin.API.Infrastructure.Middleware;
 using Admin.API.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -50,11 +53,22 @@ builder.Services.AddOptions<AnalyticsOptions>()
     .Validate(o => !string.IsNullOrWhiteSpace(o.TimeZoneId), "Analytics:TimeZoneId is required.")
     .ValidateOnStart();
 
+builder.Services.AddOptions<ServicesOptions>()
+    .Bind(builder.Configuration.GetSection(ServicesOptions.SectionName))
+    .Validate(o => Uri.TryCreate(o.Auth.BaseUrl, UriKind.Absolute, out _), "Services:Auth:BaseUrl must be a valid URI.")
+    .Validate(o => Uri.TryCreate(o.Wallet.BaseUrl, UriKind.Absolute, out _), "Services:Wallet:BaseUrl must be a valid URI.")
+    .Validate(o => Uri.TryCreate(o.Inventory.BaseUrl, UriKind.Absolute, out _), "Services:Inventory:BaseUrl must be a valid URI.")
+    .Validate(o => Uri.TryCreate(o.Marketplace.BaseUrl, UriKind.Absolute, out _), "Services:Marketplace:BaseUrl must be a valid URI.")
+    .Validate(o => o.TimeoutSeconds > 0, "Services:TimeoutSeconds must be positive.")
+    .ValidateOnStart();
+
 builder.Services.AddOptions<SeedOptions>()
     .Bind(builder.Configuration.GetSection(SeedOptions.SectionName));
 
 builder.Services.AddOptions<ServiceAuthOptions>()
-    .Bind(builder.Configuration.GetSection(ServiceAuthOptions.SectionName));
+    .Bind(builder.Configuration.GetSection(ServiceAuthOptions.SectionName))
+    .Validate(o => !string.IsNullOrWhiteSpace(o.OutgoingKey), "ServiceAuth:OutgoingKey is required.")
+    .ValidateOnStart();
 
 builder.Services.AddDbContext<AdminDbContext>(options =>
     options.UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(5), null))
@@ -68,8 +82,38 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp => {
 });
 
 builder.Services.AddSingleton<IPricePolicyCache, RedisPricePolicyCache>();
+builder.Services.AddSingleton<IAnalyticsCache, RedisAnalyticsCache>();
 builder.Services.AddScoped<IPricePolicyService, PricePolicyService>();
+builder.Services.AddScoped<IMarketAnalyticsService, MarketAnalyticsService>();
+builder.Services.AddScoped<ISupportService, SupportService>();
 builder.Services.AddScoped<AdminDbSeeder>();
+
+builder.Services.AddHttpClient<IAuthInternalClient, AuthInternalClient>((sp, client) => {
+    var svc = sp.GetRequiredService<IOptions<ServicesOptions>>().Value;
+    client.BaseAddress = new Uri(svc.Auth.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(svc.TimeoutSeconds);
+});
+
+builder.Services.AddHttpClient<IWalletInternalClient, WalletInternalClient>((sp, client) => {
+    var svc = sp.GetRequiredService<IOptions<ServicesOptions>>().Value;
+    client.BaseAddress = new Uri(svc.Wallet.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(svc.TimeoutSeconds);
+});
+
+builder.Services.AddHttpClient<IInventoryInternalClient, InventoryInternalClient>((sp, client) => {
+    var svc = sp.GetRequiredService<IOptions<ServicesOptions>>().Value;
+    client.BaseAddress = new Uri(svc.Inventory.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(svc.TimeoutSeconds);
+});
+
+builder.Services.AddHttpClient<IMarketplaceInternalClient, MarketplaceInternalClient>((sp, client) => {
+    var svc = sp.GetRequiredService<IOptions<ServicesOptions>>().Value;
+    client.BaseAddress = new Uri(svc.Marketplace.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(svc.TimeoutSeconds);
+});
+
+builder.Services.AddAdminMessaging(builder.Configuration);
+builder.Services.AddHostedService<MarketDailySummaryWorker>();
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
