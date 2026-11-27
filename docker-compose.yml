@@ -197,7 +197,7 @@ services:
       RabbitMq__Password: "${RABBITMQ_WALLET_PASSWORD:?RABBITMQ_WALLET_PASSWORD must be set in .env}"
       ServiceAuth__AllowedCallers__marketplace__Key: "${SERVICE_KEY_MARKETPLACE:?SERVICE_KEY_MARKETPLACE must be set in .env}"
       ServiceAuth__AllowedCallers__admin__Key: "${SERVICE_KEY_ADMIN:?SERVICE_KEY_ADMIN must be set in .env}"
-      ZaloPay__BaseUrl: "https://sb-openapi.zalopay.vn"
+      ZaloPay__BaseUrl: "http://zalopay-mock:9999"
       ZaloPay__AppId: "${ZALOPAY_APP_ID:-0}"
       ZaloPay__Key1: "${ZALOPAY_KEY1:-}"
       ZaloPay__Key2: "${ZALOPAY_KEY2:-}"
