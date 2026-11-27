@@ -44,11 +44,21 @@ jobs:
       - name: Validate docker-compose.yml
         run: |
           sed 's/=$/=ci_placeholder_value_at_least_32_bytes_long/' .env.example > .env.ci
+          sed -i 's/^ZALOPAY_APP_ID=.*/ZALOPAY_APP_ID=0/' .env.ci
           docker compose --env-file .env.ci config --quiet
           rm -f .env.ci
 
       - name: Build Auth.API Docker image
         run: docker build -f src/Services/Auth.API/Dockerfile -t marketplace-auth-api:ci .
+
+      - name: Build Wallet.API Docker image
+        run: docker build -f src/Services/Wallet.API/Dockerfile -t marketplace-wallet-api:ci .
+
+      - name: Build Inventory.API Docker image
+        run: docker build -f src/Services/Inventory.API/Dockerfile -t marketplace-inventory-api:ci .
+
+      - name: Build Marketplace.API Docker image
+        run: docker build -f src/Services/Marketplace.API/Dockerfile -t marketplace-marketplace-api:ci .
 
       - name: Build Admin.API Docker image
         run: docker build -f src/Services/Admin.API/Dockerfile -t marketplace-admin-api:ci .

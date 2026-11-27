@@ -1,53 +1,4 @@
 services:
-  marketplace-api:
-    build:
-      context: .
-      dockerfile: src/Services/Marketplace.API/Dockerfile
-    restart: unless-stopped
-    depends_on:
-      sqlserver-init:
-        condition: service_completed_successfully
-      mongodb:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      rabbitmq-init:
-        condition: service_completed_successfully
-    environment:
-      ASPNETCORE_ENVIRONMENT: "Production"
-      ASPNETCORE_URLS: "http://+:8080"
-      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=MarketplaceWriteDb;User Id=marketplace_runtime;Password=${MARKETPLACE_DB_PASSWORD:?MARKETPLACE_DB_PASSWORD must be set in .env};Encrypt=True;TrustServerCertificate=True;"
-      ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}"
-      Database__AutoMigrate: "true"
-      Jwt__Issuer: "marketplace-auth"
-      Jwt__Audience: "marketplace-api"
-      Jwt__SigningKey: "${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set in .env}"
-      Economy__FeeBasisPoints: "500"
-      Economy__ListingLockTtlSeconds: "20"
-      InternalServices__ServiceKey: "${SERVICE_KEY_MARKETPLACE:?SERVICE_KEY_MARKETPLACE must be set in .env}"
-      InternalServices__AuthBaseUrl: "http://auth-api:8080"
-      InternalServices__InventoryBaseUrl: "http://inventory-api:8080"
-      InternalServices__AdminBaseUrl: "http://admin-api:8080"
-      InternalServices__WalletBaseUrl: "http://wallet-api:8080"
-      RabbitMq__Host: "rabbitmq"
-      RabbitMq__Port: "5672"
-      RabbitMq__VirtualHost: "marketplace"
-      RabbitMq__Username: "marketplace_service"
-      RabbitMq__Password: "${RABBITMQ_MARKETPLACE_PASSWORD:?RABBITMQ_MARKETPLACE_PASSWORD must be set in .env}"
-      MongoDb__ConnectionString: "mongodb://marketplace_runtime:${MONGO_MARKETPLACE_PASSWORD:?MONGO_MARKETPLACE_PASSWORD must be set in .env}@mongodb:27017/MarketplaceReadDb?authSource=MarketplaceReadDb"
-      MongoDb__DatabaseName: "MarketplaceReadDb"
-      MongoDb__CatalogCollectionName: "Marketplace_Catalog"
-      ServiceAuth__AllowedCallers__admin__Key: "${SERVICE_KEY_ADMIN:?SERVICE_KEY_ADMIN must be set in .env}"
-    networks:
-      - marketplace-network
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - 'bash -c ''exec 3<>/dev/tcp/127.0.0.1/8080 && printf "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && head -n 1 <&3 | grep -q "200"'''
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04
     restart: unless-stopped
@@ -221,6 +172,139 @@ services:
       retries: 10
       start_period: 15s
 
+  wallet-api:
+    build:
+      context: .
+      dockerfile: src/Services/Wallet.API/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      sqlserver-init:
+        condition: service_completed_successfully
+      rabbitmq-init:
+        condition: service_completed_successfully
+    environment:
+      ASPNETCORE_ENVIRONMENT: "Production"
+      ASPNETCORE_URLS: "http://+:8080"
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=WalletDb;User Id=wallet_runtime;Password=${WALLET_DB_PASSWORD:?WALLET_DB_PASSWORD must be set in .env};Encrypt=True;TrustServerCertificate=True;"
+      Database__AutoMigrate: "true"
+      Jwt__Issuer: "marketplace-auth"
+      Jwt__Audience: "marketplace-api"
+      Jwt__SigningKey: "${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set in .env}"
+      RabbitMq__Host: "rabbitmq"
+      RabbitMq__Port: "5672"
+      RabbitMq__VirtualHost: "marketplace"
+      RabbitMq__Username: "wallet_service"
+      RabbitMq__Password: "${RABBITMQ_WALLET_PASSWORD:?RABBITMQ_WALLET_PASSWORD must be set in .env}"
+      ServiceAuth__AllowedCallers__marketplace__Key: "${SERVICE_KEY_MARKETPLACE:?SERVICE_KEY_MARKETPLACE must be set in .env}"
+      ServiceAuth__AllowedCallers__admin__Key: "${SERVICE_KEY_ADMIN:?SERVICE_KEY_ADMIN must be set in .env}"
+      ZaloPay__BaseUrl: "https://sb-openapi.zalopay.vn"
+      ZaloPay__AppId: "${ZALOPAY_APP_ID:-0}"
+      ZaloPay__Key1: "${ZALOPAY_KEY1:-}"
+      ZaloPay__Key2: "${ZALOPAY_KEY2:-}"
+      ZaloPay__CallbackUrl: "${ZALOPAY_CALLBACK_URL:-}"
+      ZaloPay__ReconcileIntervalSeconds: "60"
+      ZaloPay__OrderExpiryMinutes: "15"
+      ZaloPay__ReconciliationEnabled: "true"
+    networks:
+      - marketplace-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'bash -c ''exec 3<>/dev/tcp/127.0.0.1/8080 && printf "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && head -n 1 <&3 | grep -q "200"'''
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  inventory-api:
+    build:
+      context: .
+      dockerfile: src/Services/Inventory.API/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      sqlserver-init:
+        condition: service_completed_successfully
+      rabbitmq-init:
+        condition: service_completed_successfully
+    environment:
+      ASPNETCORE_ENVIRONMENT: "Production"
+      ASPNETCORE_URLS: "http://+:8080"
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=InventoryDb;User Id=inventory_runtime;Password=${INVENTORY_DB_PASSWORD:?INVENTORY_DB_PASSWORD must be set in .env};Encrypt=True;TrustServerCertificate=True;"
+      Database__AutoMigrate: "true"
+      Seed__Enabled: "true"
+      Inventory__DefaultCapacity: "20"
+      Jwt__Issuer: "marketplace-auth"
+      Jwt__Audience: "marketplace-api"
+      Jwt__SigningKey: "${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set in .env}"
+      RabbitMq__Host: "rabbitmq"
+      RabbitMq__Port: "5672"
+      RabbitMq__VirtualHost: "marketplace"
+      RabbitMq__Username: "inventory_service"
+      RabbitMq__Password: "${RABBITMQ_INVENTORY_PASSWORD:?RABBITMQ_INVENTORY_PASSWORD must be set in .env}"
+      ServiceAuth__AllowedCallers__seeder__Key: "${SERVICE_KEY_SEEDER:?SERVICE_KEY_SEEDER must be set in .env}"
+      ServiceAuth__AllowedCallers__marketplace__Key: "${SERVICE_KEY_MARKETPLACE:?SERVICE_KEY_MARKETPLACE must be set in .env}"
+      ServiceAuth__AllowedCallers__admin__Key: "${SERVICE_KEY_ADMIN:?SERVICE_KEY_ADMIN must be set in .env}"
+    networks:
+      - marketplace-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'bash -c ''exec 3<>/dev/tcp/127.0.0.1/8080 && printf "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && head -n 1 <&3 | grep -q "200"'''
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  marketplace-api:
+    build:
+      context: .
+      dockerfile: src/Services/Marketplace.API/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      sqlserver-init:
+        condition: service_completed_successfully
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq-init:
+        condition: service_completed_successfully
+    environment:
+      ASPNETCORE_ENVIRONMENT: "Production"
+      ASPNETCORE_URLS: "http://+:8080"
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=MarketplaceWriteDb;User Id=marketplace_runtime;Password=${MARKETPLACE_DB_PASSWORD:?MARKETPLACE_DB_PASSWORD must be set in .env};Encrypt=True;TrustServerCertificate=True;"
+      ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}"
+      Database__AutoMigrate: "true"
+      Jwt__Issuer: "marketplace-auth"
+      Jwt__Audience: "marketplace-api"
+      Jwt__SigningKey: "${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set in .env}"
+      Economy__FeeBasisPoints: "500"
+      Economy__ListingLockTtlSeconds: "20"
+      InternalServices__ServiceKey: "${SERVICE_KEY_MARKETPLACE:?SERVICE_KEY_MARKETPLACE must be set in .env}"
+      InternalServices__AuthBaseUrl: "http://auth-api:8080"
+      InternalServices__InventoryBaseUrl: "http://inventory-api:8080"
+      InternalServices__AdminBaseUrl: "http://admin-api:8080"
+      InternalServices__WalletBaseUrl: "http://wallet-api:8080"
+      RabbitMq__Host: "rabbitmq"
+      RabbitMq__Port: "5672"
+      RabbitMq__VirtualHost: "marketplace"
+      RabbitMq__Username: "marketplace_service"
+      RabbitMq__Password: "${RABBITMQ_MARKETPLACE_PASSWORD:?RABBITMQ_MARKETPLACE_PASSWORD must be set in .env}"
+      MongoDb__ConnectionString: "mongodb://marketplace_runtime:${MONGO_MARKETPLACE_PASSWORD:?MONGO_MARKETPLACE_PASSWORD must be set in .env}@mongodb:27017/MarketplaceReadDb?authSource=MarketplaceReadDb"
+      MongoDb__DatabaseName: "MarketplaceReadDb"
+      MongoDb__CatalogCollectionName: "Marketplace_Catalog"
+      ServiceAuth__AllowedCallers__admin__Key: "${SERVICE_KEY_ADMIN:?SERVICE_KEY_ADMIN must be set in .env}"
+    networks:
+      - marketplace-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'bash -c ''exec 3<>/dev/tcp/127.0.0.1/8080 && printf "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && head -n 1 <&3 | grep -q "200"'''
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
   admin-api:
     build:
       context: .
@@ -279,9 +363,13 @@ services:
     depends_on:
       auth-api:
         condition: service_healthy
-      admin-api:
+      wallet-api:
+        condition: service_healthy
+      inventory-api:
         condition: service_healthy
       marketplace-api:
+        condition: service_healthy
+      admin-api:
         condition: service_healthy
     environment:
       ASPNETCORE_ENVIRONMENT: "Production"
