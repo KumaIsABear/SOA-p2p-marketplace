@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>In-Game P2P Marketplace — SOA Demo</title>
+  <link rel="stylesheet" href="css/styles.css" />
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Top Header -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="brand">
+          <span class="brand-mark">◆</span>
+          <div>
+            <div class="brand-title">P2P Marketplace</div>
+            <div class="brand-sub">SOA Finals • v1.0.0</div>
+          </div>
+        </div>
+
+        <div class="base-url-box" title="Để trống để dùng same-origin qua YARP Gateway">
+          <label for="apiBaseUrlInput">API Base:</label>
+          <input
+            id="apiBaseUrlInput"
+            type="text"
+            placeholder="(same-origin)"
+            autocomplete="off"
+          />
+          <button id="btnBaseUrlSameOrigin" class="btn btn-xs btn-ghost" type="button" title="Dùng same-origin">Same</button>
+          <button id="btnBaseUrlLocal" class="btn btn-xs btn-ghost" type="button" title="Đổi sang http://localhost:8080">8080</button>
+          <button id="btnBaseUrlSave" class="btn btn-xs btn-secondary" type="button">Lưu</button>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <div id="headerSessionInfo" class="session-pill">
+          <span class="badge badge-muted">Chưa đăng nhập</span>
+        </div>
+        <div class="header-actions">
+          <button id="btnHeaderMe" class="btn btn-xs btn-secondary" type="button" disabled title="GET /api/v1/auth/me">/auth/me</button>
+          <button id="btnHeaderRefresh" class="btn btn-xs btn-secondary" type="button" disabled title="POST /api/v1/auth/refresh">Refresh Token</button>
+          <button id="btnHeaderLogout" class="btn btn-xs btn-danger" type="button" disabled title="POST /api/v1/auth/logout">Logout</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Account Status Warning Banner -->
+    <div id="accountStatusBanner" class="status-banner hidden" role="alert"></div>
+
+    <!-- Main Navigation Tabs -->
+    <nav class="main-nav" aria-label="Điều hướng chính">
+      <button class="nav-tab active" data-tab="auth" type="button">
+        <span class="tab-dot"></span> Đăng nhập & Phiên
+      </button>
+      <button class="nav-tab" data-tab="wallet" type="button">
+        <span class="tab-dot"></span> Ví Gem & ZaloPay
+      </button>
+      <button class="nav-tab" data-tab="inventory" type="button">
+        <span class="tab-dot"></span> Kho đồ
+      </button>
+      <button class="nav-tab" data-tab="marketplace" type="button">
+        <span class="tab-dot"></span> Chợ P2P
+      </button>
+      <button class="nav-tab nav-tab-admin" data-tab="gm" type="button">
+        <span class="tab-dot"></span> GM (Analytics & Giá)
+      </button>
+      <button class="nav-tab nav-tab-admin" data-tab="cs" type="button">
+        <span class="tab-dot"></span> CS (Tra soát & Moderation)
+      </button>
+    </nav>
+
+    <!-- Main Content Panels -->
+    <main class="main-content">
+      <section id="panel-auth" class="tab-panel active"></section>
+      <section id="panel-wallet" class="tab-panel"></section>
+      <section id="panel-inventory" class="tab-panel"></section>
+      <section id="panel-marketplace" class="tab-panel"></section>
+      <section id="panel-gm" class="tab-panel">
+        <div class="card empty-placeholder">
+          <h3>GM Portal — Chờ tích hợp ở Phần 2</h3>
+          <p class="text-muted">
+            Module <code>gm.js</code> (ADM-01..04: Market Overview, Analytics History, Price Policies) sẽ gắn vào container
+            <code>#panel-gm</code> thông qua hook <code>registerTabModule("gm", ...)</code> trong <code>js/app.js</code>.
+          </p>
+        </div>
+      </section>
+      <section id="panel-cs" class="tab-panel">
+        <div class="card empty-placeholder">
+          <h3>Customer Support Portal — Chờ tích hợp ở Phần 2</h3>
+          <p class="text-muted">
+            Module <code>cs.js</code> (ADM-05..07: Trade Trace 3-service, Search Trades, User Moderation) sẽ gắn vào container
+            <code>#panel-cs</code> thông qua hook <code>registerTabModule("cs", ...)</code> trong <code>js/app.js</code>.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <!-- Toast Container -->
+    <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+    <!-- Modal Container (Create Listing / Listing Detail / Live Saga Tracker) -->
+    <div id="modalBackdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+      <div id="modalDialog" class="modal-dialog">
+        <div class="modal-header">
+          <h3 id="modalTitle">Chi tiết</h3>
+          <button id="btnModalClose" class="btn btn-xs btn-ghost" type="button" aria-label="Đóng">✕</button>
+        </div>
+        <div id="modalBody" class="modal-body"></div>
+      </div>
+    </div>
+
+    <!-- SOA Activity & ProblemDetails Drawer -->
+    <aside id="activityDrawer" class="activity-drawer collapsed" aria-label="SOA Activity Log">
+      <div id="drawerToggleBar" class="drawer-header">
+        <div class="drawer-title-group">
+          <button id="btnToggleDrawer" class="btn btn-xs btn-ghost" type="button">▲ Mở Drawer</button>
+          <span class="drawer-title">SOA Activity & ProblemDetails</span>
+          <span id="drawerCountBadge" class="badge badge-muted">0 req</span>
+          <span id="drawerErrorBadge" class="badge badge-danger hidden">0 err</span>
+        </div>
+        <div class="drawer-controls">
+          <label class="checkbox-inline">
+            <input id="chkErrorsOnly" type="checkbox" />
+            Chỉ xem lỗi
+          </label>
+          <button id="btnExpandDrawer" class="btn btn-xs btn-ghost" type="button" title="Chuyển chế độ cao/trung bình">Mở rộng</button>
+          <button id="btnClearLogs" class="btn btn-xs btn-ghost" type="button">Xóa log</button>
+        </div>
+      </div>
+      <div id="activityLogList" class="drawer-body">
+        <div class="empty-log">Chưa có HTTP request nào. Thực hiện thao tác để quan sát X-Correlation-ID, Idempotency-Key và ProblemDetails.</div>
+      </div>
+    </aside>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

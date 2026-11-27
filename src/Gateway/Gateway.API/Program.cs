@@ -222,6 +222,8 @@ app.UseMiddleware<GlobalExceptionMiddleware>();
 app.UseMiddleware<TechnicalEndpointGuardMiddleware>();
 app.UseForwardedHeaders();
 app.UseHttpMetrics();
+app.UseDefaultFiles();
+app.UseStaticFiles();
 app.UseRouting();
 app.UseCors(GatewayPolicies.CorsPolicy);
 app.UseAuthentication();
