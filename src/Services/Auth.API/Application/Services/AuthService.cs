@@ -167,7 +167,25 @@ public sealed class AuthService : IAuthService {
                 .Include(t => t.User)
                 .FirstOrDefaultAsync(t => t.TokenHash == tokenHash, cancellationToken);
 
-            if (existingToken is null || existingToken.RevokedAt is not null || existingToken.ExpiresAt <= now) {
+            if (existingToken is null || existingToken.ExpiresAt <= now) {
+                await transaction.RollbackAsync(cancellationToken);
+                return AuthResult<TokenResponse>.Failure(AuthErrors.InvalidRefreshToken());
+            }
+
+            if (existingToken.User.Status == AccountStatus.Banned) {
+                if (existingToken.RevokedAt is null) {
+                    await _db.RefreshTokens
+                        .Where(t => t.TokenId == existingToken.TokenId && t.RevokedAt == null)
+                        .ExecuteUpdateAsync(setters => setters.SetProperty(t => t.RevokedAt, now), cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+                } else {
+                    await transaction.RollbackAsync(cancellationToken);
+                }
+
+                return AuthResult<TokenResponse>.Failure(AuthErrors.AccountBanned());
+            }
+
+            if (existingToken.RevokedAt is not null) {
                 await transaction.RollbackAsync(cancellationToken);
                 return AuthResult<TokenResponse>.Failure(AuthErrors.InvalidRefreshToken());
             }
@@ -179,11 +197,6 @@ public sealed class AuthService : IAuthService {
             if (rowsUpdated == 0) {
                 await transaction.RollbackAsync(cancellationToken);
                 return AuthResult<TokenResponse>.Failure(AuthErrors.InvalidRefreshToken());
-            }
-
-            if (existingToken.User.Status == AccountStatus.Banned) {
-                await transaction.CommitAsync(cancellationToken);
-                return AuthResult<TokenResponse>.Failure(AuthErrors.AccountBanned());
             }
 
             var response = IssueTokens(existingToken.User, now);
