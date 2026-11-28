@@ -1,0 +1,26 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: marketplace-http
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['gateway:8080']
+        labels:
+          service: gateway
+      - targets: ['auth-api:8080']
+        labels:
+          service: auth-api
+      - targets: ['wallet-api:8080']
+        labels:
+          service: wallet-api
+      - targets: ['inventory-api:8080']
+        labels:
+          service: inventory-api
+      - targets: ['marketplace-api:8080']
+        labels:
+          service: marketplace-api
+      - targets: ['admin-api:8080']
+        labels:
+          service: admin-api
