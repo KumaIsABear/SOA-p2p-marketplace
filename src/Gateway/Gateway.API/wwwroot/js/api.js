@@ -5,11 +5,31 @@ const STORAGE_KEYS = {
   accessToken: "p2p_access_token",
   refreshToken: "p2p_refresh_token",
   user: "p2p_user_profile",
+  demoRbac: "p2p_demo_rbac_all_tabs",
 };
 
+export const SEED_TEMPLATES = [
+  { templateId: "11111111-1111-4111-8111-000000000001", name: "Dragon Fang Sword" },
+  { templateId: "11111111-1111-4111-8111-000000000002", name: "Aegis Knight Shield" },
+  { templateId: "11111111-1111-4111-8111-000000000003", name: "Greater Healing Potion" },
+  { templateId: "11111111-1111-4111-8111-000000000004", name: "Starlight Ore" },
+];
+
+export const SEED_USERS = {
+  gm: { userId: "10000000-0000-4000-8000-000000000001", label: "GM Admin", email: "gm@marketplace.local", role: "GM" },
+  cs: { userId: "10000000-0000-4000-8000-000000000002", label: "CS Staff", email: "cs@marketplace.local", role: "CS" },
+  seller: { userId: "10000000-0000-4000-8000-000000000003", label: "Demo Seller", email: "seller@marketplace.local", role: "Player" },
+  buyer: { userId: "10000000-0000-4000-8000-000000000004", label: "Demo Buyer", email: "buyer@marketplace.local", role: "Player" },
+  buyerFull: { userId: "10000000-0000-4000-8000-000000000005", label: "Full-Inv Buyer", email: "buyer.full@marketplace.local", role: "Player" },
+};
+
+export function getTemplateName(templateId) {
+  const found = SEED_TEMPLATES.find((t) => t.templateId.toLowerCase() === String(templateId || "").toLowerCase());
+  return found ? found.name : "";
+}
+
 export const ENDPOINTS = {
-  authDemoConfig: "/api/v1/auth/demo-config",
-  authRegister: "/api/v1/auth/register",
+  authDemoConfig: "/demo-config",
   authLogin: "/api/v1/auth/login",
   authGoogle: "/api/v1/auth/google",
   authRefresh: "/api/v1/auth/refresh",
@@ -59,6 +79,14 @@ export function setApiBaseUrl(url) {
   const clean = (url ?? "").trim().replace(/\/+$/, "");
   localStorage.setItem(STORAGE_KEYS.baseUrl, clean);
   return clean;
+}
+
+export function getDemoRbacEnabled() {
+  return localStorage.getItem(STORAGE_KEYS.demoRbac) === "1";
+}
+
+export function setDemoRbacEnabled(enabled) {
+  localStorage.setItem(STORAGE_KEYS.demoRbac, enabled ? "1" : "0");
 }
 
 export function getSession() {
@@ -180,7 +208,7 @@ async function performRefreshToken() {
         clearSession();
         return false;
       }
-      const nextAccess = res.data.accessToken || res.data.token;
+      const nextAccess = res.data.accessToken;
       const nextRefresh = res.data.refreshToken || refreshToken;
       const nextUser = res.data.user || getSession().user;
       if (!nextAccess) {
@@ -308,7 +336,6 @@ export async function apiRequest(path, options = {}) {
     problem,
   });
 
-  // Auto-refresh khi 401 (có single-flight lock chống race condition)
   if (
     response.status === 401 &&
     auth &&
@@ -336,11 +363,11 @@ export async function apiRequest(path, options = {}) {
 // --- Formatters & Security Helpers ---
 export function escapeHtml(value) {
   return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+    .replaceAll("&", "\x26amp;")
+    .replaceAll("<", "\x26lt;")
+    .replaceAll(">", "\x26gt;")
+    .replaceAll('"', "\x26quot;")
+    .replaceAll("'", "\x26#39;");
 }
 
 export function formatGem(value) {
@@ -351,6 +378,17 @@ export function formatGem(value) {
   } catch {
     const num = Number(value);
     return Number.isFinite(num) ? Math.trunc(num).toLocaleString("vi-VN") : String(value);
+  }
+}
+
+export function formatSignedGem(value) {
+  if (value === null || value === undefined || value === "") return "0";
+  try {
+    const bi = BigInt(String(value).split(".")[0]);
+    if (bi > 0n) return `+${bi.toLocaleString("vi-VN")}`;
+    return bi.toLocaleString("vi-VN");
+  } catch {
+    return formatGem(value);
   }
 }
 
@@ -372,6 +410,24 @@ export function formatDateTime(iso) {
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+export function getTodayHoChiMinh() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+export function addDaysYmd(ymd, deltaDays) {
+  const [y, m, d] = String(ymd).split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + deltaDays));
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
 }
 
 export function shortId(id, len = 10) {
@@ -400,11 +456,37 @@ export function statusBadge(status) {
   const s = String(status || "Unknown");
   const lower = s.toLowerCase();
   let cls = "badge-muted";
-  if (["active", "completed", "succeeded", "paid", "open", "available"].includes(lower)) cls = "badge-success";
-  else if (["pending", "pendinglock", "processing", "locked", "reserved", "traderestricted", "reversingitem", "releasingfunds"].includes(lower)) cls = "badge-warning";
-  else if (["failed", "banned", "cancelled", "canceled", "rejected", "expired"].includes(lower)) cls = "badge-danger";
-  else if (["taxburn", "gm", "admin"].includes(lower)) cls = "badge-purple";
-  else if (["cs", "support", "sold"].includes(lower)) cls = "badge-info";
+  if (["active", "completed", "succeeded", "paid", "available", "finalized", "settled"].includes(lower)) {
+    cls = "badge-success";
+  } else if (
+    [
+      "pending",
+      "pendinglock",
+      "processing",
+      "locked",
+      "pendingsettlement",
+      "traderestricted",
+      "holdingfunds",
+      "transferring",
+      "settling",
+      "finalizing",
+      "reversingitem",
+      "releasingfunds",
+      "held",
+      "retrying",
+      "unknown",
+      "notsettled",
+      "reversed",
+    ].includes(lower)
+  ) {
+    cls = "badge-warning";
+  } else if (["failed", "createfailed", "banned", "cancelled", "rejected", "expired"].includes(lower)) {
+    cls = "badge-danger";
+  } else if (["taxburn", "gm"].includes(lower)) {
+    cls = "badge-purple";
+  } else if (["cs", "sold", "player", "topup", "settlementcredit", "settlementdebit", "hold", "release", "released"].includes(lower)) {
+    cls = "badge-info";
+  }
   return `<span class="badge ${cls}">${escapeHtml(s)}</span>`;
 }
 
@@ -414,6 +496,22 @@ export function problemMessage(res, fallback = "Yêu cầu thất bại") {
     return `${code}${res.problem.detail || res.problem.title || fallback}`;
   }
   return fallback;
+}
+
+export function renderProblemAlert(res) {
+  if (!res?.problem) return "";
+  const p = res.problem;
+  return `
+    <div class="alert alert-danger">
+      <div>
+        <strong>HTTP ${escapeHtml(p.status)}</strong>
+        ${p.code ? `<code>${escapeHtml(p.code)}</code> — ` : ""}
+        ${escapeHtml(p.detail || p.title)}
+      </div>
+      ${p.errors?.length ? `<ul style="margin:6px 0 0 18px;padding:0;">${p.errors.map((e) => `<li>${escapeHtml(e)}</li>`).join("")}</ul>` : ""}
+      ${p.traceId ? `<div style="margin-top:6px;">${renderIdChip(p.traceId, "traceId")}</div>` : ""}
+    </div>
+  `;
 }
 
 // --- Toast & Modal ---

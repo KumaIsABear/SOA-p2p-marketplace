@@ -4,6 +4,7 @@ import {
   escapeHtml,
   formatDateTime,
   formatGem,
+  formatSignedGem,
   formatVnd,
   getSession,
   newUuid,
@@ -14,14 +15,13 @@ import {
 } from "./api.js";
 
 const DEFAULT_PACKAGES = [
-  { code: "GEM_100", name: "Gói Khởi Đầu", gemAmount: 100, priceVnd: 20000 },
-  { code: "GEM_500", name: "Gói Chiến Binh", gemAmount: 500, priceVnd: 95000 },
-  { code: "GEM_1200", name: "Gói Huyền Thoại", gemAmount: 1200, priceVnd: 220000 },
-  { code: "GEM_5000", name: "Gói Đại Gia", gemAmount: 5000, priceVnd: 850000 },
+  { packageId: "pkg-100", amountVnd: 10000, gemAmount: 100 },
+  { packageId: "pkg-500", amountVnd: 50000, gemAmount: 500 },
+  { packageId: "pkg-1000", amountVnd: 100000, gemAmount: 1000 },
+  { packageId: "pkg-2500", amountVnd: 250000, gemAmount: 2500 },
 ];
 
-const getPkgId = (p) => p?.packageId || p?.id || p?.code || "";
-const getTopUpId = (d) => d?.topUpId || d?.id || d?.orderId || "";
+const LEDGER_TYPES = ["TopUp", "Hold", "SettlementDebit", "SettlementCredit", "Release", "TaxBurn"];
 
 export function createWalletModule() {
   const panel = document.getElementById("panel-wallet");
@@ -29,11 +29,11 @@ export function createWalletModule() {
   const state = {
     wallet: null,
     packages: DEFAULT_PACKAGES,
-    selectedPackageCode: DEFAULT_PACKAGES[0].code,
+    selectedPackageId: DEFAULT_PACKAGES[0].packageId,
     idempotencyKey: newUuid(),
     activeTopUp: null,
     pollTimer: null,
-    ledger: { items: [], page: 1, pageSize: 15, totalCount: 0 },
+    ledger: { items: [], page: 1, pageSize: 15, totalCount: 0, type: "", tradeId: "" },
     loading: false,
   };
 
@@ -54,112 +54,125 @@ export function createWalletModule() {
     const [walletRes, pkgRes, ledgerRes] = await Promise.all([
       apiRequest(ENDPOINTS.walletMe),
       apiRequest(ENDPOINTS.walletPackages, { retryOn401: false }),
-      apiRequest(ENDPOINTS.walletLedger, { query: { page: state.ledger.page, pageSize: state.ledger.pageSize } }),
+      apiRequest(ENDPOINTS.walletLedger, {
+        query: {
+          page: state.ledger.page,
+          pageSize: state.ledger.pageSize,
+          type: state.ledger.type,
+          tradeId: state.ledger.tradeId,
+        },
+      }),
     ]);
     state.loading = false;
 
     if (walletRes.ok && walletRes.data) {
       state.wallet = walletRes.data;
+    } else if (!walletRes.ok) {
+      showToast("Lỗi tải Ví Gem (WAL-01)", problemMessage(walletRes), "danger");
     }
+
     if (pkgRes.ok && pkgRes.data) {
-    const list = Array.isArray(pkgRes.data)
-        ? pkgRes.data
-        : pkgRes.data.items || pkgRes.data.packages || [];
-    if (list.length > 0) {
+      const list = Array.isArray(pkgRes.data.items) ? pkgRes.data.items : [];
+      if (list.length > 0) {
         state.packages = list;
-        if (!state.packages.some((p) => getPkgId(p) === state.selectedPackageCode)) {
-        state.selectedPackageCode = getPkgId(state.packages[0]);
-            }
+        if (!state.packages.some((p) => p.packageId === state.selectedPackageId)) {
+          state.selectedPackageId = state.packages[0].packageId;
         }
+      }
     }
+
     if (ledgerRes.ok && ledgerRes.data) {
       const d = ledgerRes.data;
-      state.ledger.items = d.items || d.entries || (Array.isArray(d) ? d : []);
+      state.ledger.items = Array.isArray(d.items) ? d.items : [];
       state.ledger.totalCount = d.totalCount ?? state.ledger.items.length;
+    } else if (!ledgerRes.ok) {
+      showToast("Lỗi tải Sổ cái (WAL-02)", problemMessage(ledgerRes), "danger");
     }
+
     render();
   }
 
   async function createTopUpOrder() {
-    const pkg = state.packages.find((p) => getPkgId(p) === state.selectedPackageCode);
+    const pkg = state.packages.find((p) => p.packageId === state.selectedPackageId);
     if (!pkg) return;
 
     const keyInput = panel.querySelector("#walletIdemKey");
     const key = (keyInput?.value || state.idempotencyKey || newUuid()).trim();
     state.idempotencyKey = key;
 
+    // WAL-04: CreateTopUpRequest chỉ nhận { packageId }
     const res = await apiRequest(ENDPOINTS.walletTopUp, {
-    method: "POST",
-    idempotencyKey: key,
-    body: {
-        packageId: getPkgId(pkg),
-        returnUrl: `${window.location.origin}${window.location.pathname}?topUpReturn=1`,
-        },
+      method: "POST",
+      idempotencyKey: key,
+      body: { packageId: pkg.packageId },
     });
 
     if (!res.ok) {
-      showToast("Tạo đơn nạp ZaloPay thất bại", problemMessage(res), "danger");
+      showToast("Tạo đơn nạp ZaloPay thất bại (WAL-04)", problemMessage(res), "danger");
       return;
     }
 
     state.activeTopUp = res.data;
-    const orderId = getTopUpId(res.data);
+    const topUpId = res.data?.topUpId || "";
+    const statusNote = res.status === 202
+      ? "202 Accepted (Pending — chờ reconcile)"
+      : "201 Created";
     showToast(
-      "Đã tạo đơn nạp ZaloPay",
-      `Mã đơn: ${orderId || "N/A"} (giữ nguyên Idempotency-Key để thử Replay)`,
+      `Đơn nạp ZaloPay (${statusNote})`,
+      `TopUpId: ${topUpId || "N/A"} (giữ Idempotency-Key để test Replay / 409 Conflict)`,
       "success"
     );
 
-    if (orderId) {
-      sessionStorage.setItem("p2p_last_topup_order", orderId);
-      startPollingOrder(orderId);
+    if (topUpId) {
+      sessionStorage.setItem("p2p_last_topup_order", topUpId);
+      startPollingOrder(topUpId);
     }
     render();
   }
 
-  function startPollingOrder(orderId) {
+  function startPollingOrder(topUpId) {
     stopPolling();
-    pollOrderOnce(orderId);
-    state.pollTimer = setInterval(() => pollOrderOnce(orderId), 3000);
+    pollOrderOnce(topUpId);
+    state.pollTimer = setInterval(() => pollOrderOnce(topUpId), 3000);
   }
 
-  async function pollOrderOnce(orderId) {
-    if (!orderId || !getSession().isAuthenticated) {
-        stopPolling();
-        return;
+  async function pollOrderOnce(topUpId) {
+    if (!topUpId || !getSession().isAuthenticated) {
+      stopPolling();
+      return;
     }
-    const res = await apiRequest(ENDPOINTS.walletTopUpOrder(orderId));
+    const res = await apiRequest(ENDPOINTS.walletTopUpOrder(topUpId));
     if (!res.ok) {
-        if ([400, 403, 404].includes(res.status)) {
+      if ([400, 403, 404].includes(res.status)) {
         stopPolling();
         sessionStorage.removeItem("p2p_last_topup_order");
         render();
-        }
-        return;
+      }
+      return;
     }
     if (!res.data) return;
 
     state.activeTopUp = { ...(state.activeTopUp || {}), ...res.data };
     const st = String(res.data.status || "").toLowerCase();
-    if (["completed", "succeeded", "paid"].includes(st)) {
-        stopPolling();
-        showToast("Nạp Gem thành công!", "Số dư ví và sổ cái đã được cập nhật.", "success");
-        await loadWallet();
-        } else if (["failed", "expired", "cancelled", "canceled"].includes(st)) {
-        stopPolling();
-        showToast("Đơn nạp kết thúc", `Trạng thái: ${res.data.status}`, "warning");
-        render();
-        } else {
-        render();
-        }
+    if (st === "paid") {
+      stopPolling();
+      showToast("Nạp Gem thành công!", "Số dư ví và sổ cái đã được cập nhật.", "success");
+      await loadWallet();
+    } else if (["failed", "expired"].includes(st)) {
+      stopPolling();
+      showToast("Đơn nạp kết thúc", `Trạng thái: ${res.data.status}`, "warning");
+      render();
+    } else {
+      render();
     }
+  }
 
   function checkTopUpReturnParam() {
     const params = new URLSearchParams(window.location.search);
     if (params.get("topUpReturn") === "1") {
-      const orderId = params.get("orderId") || sessionStorage.getItem("p2p_last_topup_order");
-      showToast("Đã quay lại từ ZaloPay Sandbox", "Đang kiểm tra trạng thái đơn nạp...", "info");
-      if (orderId) startPollingOrder(orderId);
+      const topUpId = params.get("topUpId") || params.get("orderId") || sessionStorage.getItem("p2p_last_topup_order");
+      showToast("Đã quay lại từ ZaloPay Sandbox", "Đang kiểm tra trạng thái đơn nạp (WAL-05)...", "info");
+      if (topUpId) startPollingOrder(topUpId);
       params.delete("topUpReturn");
       const cleanUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`;
       window.history.replaceState({}, "", cleanUrl);
@@ -173,9 +186,10 @@ export function createWalletModule() {
     }
 
     const w = state.wallet || {};
-    const available = w.availableGem ?? w.availableBalance ?? 0;
-    const locked = w.lockedGem ?? w.lockedBalance ?? 0;
-    const total = w.totalGem ?? (BigInt(available || 0) + BigInt(locked || 0)).toString();
+    const totalBalance = w.totalBalance ?? 0;
+    const holdBalance = w.holdBalance ?? 0;
+    const availableBalance = w.availableBalance ?? 0;
+    const version = w.version ?? "—";
     const totalPages = Math.max(1, Math.ceil(state.ledger.totalCount / state.ledger.pageSize));
 
     panel.innerHTML = `
@@ -184,36 +198,36 @@ export function createWalletModule() {
         <div class="card-header">
           <div>
             <h3 class="card-title">Tổng quan Ví Gem (WAL-01)</h3>
-            <p class="card-subtitle">Phân tách số dư khả dụng và số dư đang tạm khóa trong Saga giao dịch</p>
+            <p class="card-subtitle">Invariant: <code>totalBalance = availableBalance + holdBalance</code> • Currency: <code>${escapeHtml(w.currency || "GEM")}</code></p>
           </div>
           <button id="btnRefreshWallet" type="button" class="btn btn-sm btn-secondary">↻ Làm mới ví</button>
         </div>
 
         <div class="grid-3">
           <div class="stat-box">
-            <div class="stat-label">Khả dụng (Available)</div>
-            <div class="stat-value text-accent">${formatGem(available)} <span style="font-size:13px;">Gem</span></div>
+            <div class="stat-label">Khả dụng (availableBalance)</div>
+            <div class="stat-value text-accent">${formatGem(availableBalance)} <span style="font-size:13px;">Gem</span></div>
             <div class="stat-meta">Dùng để mua vật phẩm ngay</div>
           </div>
           <div class="stat-box">
-            <div class="stat-label">Đang tạm khóa (Locked / Escrow)</div>
-            <div class="stat-value text-warning">${formatGem(locked)} <span style="font-size:13px;">Gem</span></div>
-            <div class="stat-meta">Giữ tạm trong khi Saga khớp lệnh</div>
+            <div class="stat-label">Đang tạm giữ (holdBalance)</div>
+            <div class="stat-value text-warning">${formatGem(holdBalance)} <span style="font-size:13px;">Gem</span></div>
+            <div class="stat-meta">Escrow trong khi Saga khớp lệnh</div>
           </div>
           <div class="stat-box">
-            <div class="stat-label">Tổng số dư</div>
-            <div class="stat-value text-success">${formatGem(total)} <span style="font-size:13px;">Gem</span></div>
-            <div class="stat-meta">${w.walletId ? renderIdChip(w.walletId, "Wallet") : "Authoritative SQL Ledger"}</div>
+            <div class="stat-label">Tổng số dư (totalBalance)</div>
+            <div class="stat-value text-success">${formatGem(totalBalance)} <span style="font-size:13px;">Gem</span></div>
+            <div class="stat-meta">Version: <strong class="mono">v${escapeHtml(version)}</strong> ${w.userId ? `• ${renderIdChip(w.userId, "User")}` : ""}</div>
           </div>
         </div>
       </div>
 
-      <!-- WAL-02 / WAL-03: ZaloPay Top-up & Idempotency Replay -->
+      <!-- WAL-03 / WAL-04 / WAL-05: ZaloPay Top-up & Idempotency Replay -->
       <div class="card">
         <div class="card-header">
           <div>
-            <h3 class="card-title">Nạp Gem qua ZaloPay Sandbox (WAL-02..04)</h3>
-            <p class="card-subtitle">Hỗ trợ test Replay Idempotency-Key và tự động poll trạng thái đơn mỗi 3 giây</p>
+            <h3 class="card-title">Nạp Gem qua ZaloPay Sandbox (WAL-03..05)</h3>
+            <p class="card-subtitle"><code>POST /api/v1/wallet/top-ups</code> gửi <code>{ packageId }</code> kèm <code>Idempotency-Key</code> và poll SQL mỗi 3 giây</p>
           </div>
         </div>
 
@@ -226,13 +240,12 @@ export function createWalletModule() {
         <div class="grid-4" style="margin-bottom:14px;">
           ${state.packages
             .map((p) => {
-              const code = getPkgId(p);
-              const selected = code === state.selectedPackageCode ? "selected" : "";
+              const selected = p.packageId === state.selectedPackageId ? "selected" : "";
               return `
-                <div class="package-card ${selected}" data-pkg-code="${escapeHtml(code)}">
-                  <div class="text-muted" style="font-size:12px;">${escapeHtml(p.name || code)}</div>
-                  <div class="package-gem">+${formatGem(p.gemAmount || p.gems)} Gem</div>
-                  <div class="package-vnd">${formatVnd(p.priceVnd || p.amountVnd)}</div>
+                <div class="package-card ${selected}" data-pkg-id="${escapeHtml(p.packageId)}">
+                  <div class="text-muted mono" style="font-size:12px;">${escapeHtml(p.packageId)}</div>
+                  <div class="package-gem">+${formatGem(p.gemAmount)} Gem</div>
+                  <div class="package-vnd">${formatVnd(p.amountVnd)}</div>
                 </div>
               `;
             })
@@ -241,7 +254,7 @@ export function createWalletModule() {
 
         <div class="form-row">
           <button id="btnCreateTopUp" type="button" class="btn btn-primary">Tạo đơn nạp ZaloPay</button>
-          <button id="btnReplayTopUp" type="button" class="btn btn-warning" title="Gửi lại đúng Idempotency-Key hiện tại">Replay cùng Idempotency-Key</button>
+          <button id="btnReplayTopUp" type="button" class="btn btn-warning" title="Gửi lại đúng Idempotency-Key hiện tại (cùng gói => replay, khác gói => 409 IDEMPOTENCY_CONFLICT)">Replay cùng Idempotency-Key</button>
         </div>
 
         ${
@@ -251,18 +264,19 @@ export function createWalletModule() {
             <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;">
               <div>
                 <strong>Đơn nạp hiện tại:</strong>
-                ${renderIdChip(getTopUpId(state.activeTopUp), "TopUpId")}
-                ${state.activeTopUp.appTransId ? renderIdChip(state.activeTopUp.appTransId, "ZaloPay") : ""}
+                ${renderIdChip(state.activeTopUp.topUpId, "TopUpId")}
+                ${state.activeTopUp.appTransId ? renderIdChip(state.activeTopUp.appTransId, "appTransId") : ""}
+                ${state.activeTopUp.providerTxnId ? renderIdChip(String(state.activeTopUp.providerTxnId), "zpTransId") : ""}
                 ${statusBadge(state.activeTopUp.status || "Pending")}
                 ${state.pollTimer ? `<span class="badge badge-info"><span class="spinner"></span> Auto-poll 3s</span>` : ""}
               </div>
               <div style="display:flex;gap:6px;">
                 ${
-                  state.activeTopUp.orderUrl || state.activeTopUp.paymentUrl
-                    ? `<a href="${escapeHtml(state.activeTopUp.orderUrl || state.activeTopUp.paymentUrl)}" target="_blank" rel="noopener noreferrer" class="btn btn-xs btn-success">Mở cổng ZaloPay ↗</a>`
+                  state.activeTopUp.paymentUrl
+                    ? `<a href="${escapeHtml(state.activeTopUp.paymentUrl)}" target="_blank" rel="noopener noreferrer" class="btn btn-xs btn-success">Mở cổng ZaloPay ↗</a>`
                     : ""
                 }
-                <button id="btnPollNow" type="button" class="btn btn-xs btn-secondary">Kiểm tra ngay</button>
+                <button id="btnPollNow" type="button" class="btn btn-xs btn-secondary">Kiểm tra ngay (WAL-05)</button>
                 ${state.pollTimer ? `<button id="btnStopPoll" type="button" class="btn btn-xs btn-ghost">Dừng poll</button>` : ""}
               </div>
             </div>
@@ -271,50 +285,79 @@ export function createWalletModule() {
         }
       </div>
 
-      <!-- WAL-05: Ledger with TaxBurn Highlight -->
+      <!-- WAL-02: Ledger with Type Filter & TaxBurn Highlight -->
       <div class="card">
         <div class="card-header">
           <div>
-            <h3 class="card-title">Sổ cái giao dịch Gem — Ledger (WAL-05)</h3>
-            <p class="card-subtitle">Các dòng <code>TaxBurn</code> (phí sàn 5%) được tô tím nổi bật để đối soát kinh tế</p>
+            <h3 class="card-title">Sổ cái giao dịch Gem — Ledger (WAL-02)</h3>
+            <p class="card-subtitle">Dòng <code>TaxBurn</code> ghi dưới Seller với <code>totalDelta = 0</code>, <code>holdDelta = 0</code>, <code>feeGem > 0</code> (audit-only)</p>
           </div>
           <span class="badge badge-purple">TaxBurn Highlight</span>
         </div>
+
+        <form id="ledgerFilterForm" class="form-row">
+          <div class="form-group" style="max-width:210px;">
+            <label for="ledgerTypeFilter">Loại bút toán (type)</label>
+            <select id="ledgerTypeFilter">
+              <option value="">Tất cả</option>
+              ${LEDGER_TYPES.map((t) => `<option value="${t}" ${state.ledger.type === t ? "selected" : ""}>${t}</option>`).join("")}
+            </select>
+          </div>
+          <div class="form-group" style="max-width:320px;">
+            <label for="ledgerTradeIdFilter">Lọc theo Trade ID (tuỳ chọn)</label>
+            <input id="ledgerTradeIdFilter" type="text" value="${escapeHtml(state.ledger.tradeId)}" placeholder="UUID tradeId..." />
+          </div>
+          <button type="submit" class="btn btn-primary">Lọc sổ cái</button>
+          <button id="btnResetLedgerFilter" type="button" class="btn btn-secondary">Xóa lọc</button>
+        </form>
 
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Thời gian</th>
-                <th>Loại bút toán</th>
-                <th>Biến động Gem</th>
-                <th>Số dư sau GD</th>
-                <th>Mã tham chiếu</th>
-                <th>Ghi chú</th>
+                <th>Entry ID</th>
+                <th>Loại (type)</th>
+                <th>totalDelta</th>
+                <th>holdDelta</th>
+                <th>feeGem</th>
+                <th>Trade / TopUp ID</th>
               </tr>
             </thead>
             <tbody>
               ${
                 state.ledger.items.length === 0
-                  ? `<tr><td colspan="6" class="text-muted" style="text-align:center;padding:22px;">Chưa có bút toán sổ cái nào.</td></tr>`
+                  ? `<tr><td colspan="7" class="text-muted" style="text-align:center;padding:22px;">Chưa có bút toán sổ cái nào khớp bộ lọc.</td></tr>`
                   : state.ledger.items
                       .map((entry) => {
-                        const type = entry.entryType || entry.type || "Unknown";
-                        const isTaxBurn = String(type).toLowerCase().includes("taxburn");
-                        const delta = BigInt(String(entry.amountGem ?? entry.amount ?? 0).split(".")[0]);
-                        const deltaClass = delta > 0n ? "text-success" : delta < 0n ? "text-danger" : "";
-                        const sign = delta > 0n ? "+" : "";
+                        const isTaxBurn = String(entry.type) === "TaxBurn";
+                        const totalBi = BigInt(String(entry.totalDelta ?? 0));
+                        const holdBi = BigInt(String(entry.holdDelta ?? 0));
+                        const totalCls = totalBi > 0n ? "text-success" : totalBi < 0n ? "text-danger" : "text-muted";
+                        const holdCls = holdBi > 0n ? "text-warning" : holdBi < 0n ? "text-accent" : "text-muted";
+                        const refHtml = entry.tradeId
+                          ? renderIdChip(entry.tradeId, "Trade")
+                          : entry.topUpId
+                            ? renderIdChip(entry.topUpId, "TopUp")
+                            : `<span class="text-muted">—</span>`;
                         return `
                           <tr class="${isTaxBurn ? "row-taxburn" : ""}">
-                            <td>${escapeHtml(formatDateTime(entry.createdAt || entry.timestamp))}</td>
-                            <td>${statusBadge(type)}</td>
-                            <td class="mono ${deltaClass}" style="font-weight:700;">${sign}${formatGem(delta)}</td>
-                            <td class="mono">${formatGem(entry.balanceAfterGem ?? entry.balanceAfter ?? "—")}</td>
-                            <td>${renderIdChip(entry.referenceId || entry.tradeId || entry.id)}</td>
-                            <td>${escapeHtml(entry.description || entry.note || "—")}</td>
+                            <td>${escapeHtml(formatDateTime(entry.createdAt))}</td>
+                            <td>${renderIdChip(entry.entryId)}</td>
+                            <td>${statusBadge(entry.type)}</td>
+                            <td class="mono ${totalCls}" style="font-weight:700;">${escapeHtml(formatSignedGem(entry.totalDelta))}</td>
+                            <td class="mono ${holdCls}" style="font-weight:700;">${escapeHtml(formatSignedGem(entry.holdDelta))}</td>
+                            <td class="mono">
+                              ${
+                                entry.feeGem !== null && entry.feeGem !== undefined
+                                  ? `<span class="badge badge-purple">🔥 ${formatGem(entry.feeGem)} Gem</span>`
+                                  : `<span class="text-muted">—</span>`
+                              }
+                            </td>
+                            <td>${refHtml}</td>
                           </tr>
                         `;
-                      })    
+                      })
                       .join("")
               }
             </tbody>
@@ -343,9 +386,9 @@ export function createWalletModule() {
       if (input) input.value = state.idempotencyKey;
     });
 
-    panel.querySelectorAll("[data-pkg-code]").forEach((card) => {
+    panel.querySelectorAll("[data-pkg-id]").forEach((card) => {
       card.addEventListener("click", () => {
-        state.selectedPackageCode = card.dataset.pkgCode;
+        state.selectedPackageId = card.dataset.pkgId;
         render();
       });
     });
@@ -358,13 +401,28 @@ export function createWalletModule() {
     panel.querySelector("#btnReplayTopUp")?.addEventListener("click", createTopUpOrder);
 
     panel.querySelector("#btnPollNow")?.addEventListener("click", () => {
-    const id = getTopUpId(state.activeTopUp);
-    if (id) pollOrderOnce(id);
+      const id = state.activeTopUp?.topUpId;
+      if (id) pollOrderOnce(id);
     });
 
     panel.querySelector("#btnStopPoll")?.addEventListener("click", () => {
       stopPolling();
       render();
+    });
+
+    panel.querySelector("#ledgerFilterForm")?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      state.ledger.type = panel.querySelector("#ledgerTypeFilter").value;
+      state.ledger.tradeId = panel.querySelector("#ledgerTradeIdFilter").value.trim();
+      state.ledger.page = 1;
+      loadWallet();
+    });
+
+    panel.querySelector("#btnResetLedgerFilter")?.addEventListener("click", () => {
+      state.ledger.type = "";
+      state.ledger.tradeId = "";
+      state.ledger.page = 1;
+      loadWallet();
     });
 
     panel.querySelector("#btnLedgerPrev")?.addEventListener("click", () => {

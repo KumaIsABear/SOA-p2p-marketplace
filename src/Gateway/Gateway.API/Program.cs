@@ -242,5 +242,15 @@ app.Run();
 static string GetClientIp(HttpContext context) {
     return context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 }
+builder.Services.AddOptions<GoogleOptions>()
+    .Bind(builder.Configuration.GetSection(GoogleOptions.SectionName));
+
+app.MapGet("/demo-config", (IOptions<GoogleOptions> googleOptions) =>
+    Results.Ok(new {
+        googleClientId = googleOptions.Value.ClientId ?? string.Empty
+    })
+)
+    .AllowAnonymous()
+    .RequireCors(GatewayPolicies.CorsPolicy);
 
 public partial class Program { }

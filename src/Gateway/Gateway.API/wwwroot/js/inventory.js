@@ -14,10 +14,12 @@ import {
   statusBadge,
 } from "./api.js";
 
-function computeListingFeeBigInt(grossStr) {
+function computeListingFeeBigInt(unitPriceStr, quantityNum) {
   try {
-    const gross = BigInt(String(grossStr || "0").replace(/[^\d]/g, "") || "0");
-    const fee = (gross * 5n) / 100n;
+    const unit = BigInt(String(unitPriceStr || "0").replace(/[^\d]/g, "") || "0");
+    const qty = BigInt(Math.max(1, Number(quantityNum || 1)));
+    const gross = unit * qty;
+    const fee = (gross * 500n) / 10000n; // feeBps = 500 (5%)
     const net = gross - fee;
     return { gross, fee, net };
   } catch {
@@ -31,8 +33,7 @@ export function createInventoryModule(appCtx) {
   const state = {
     items: [],
     usedSlots: 0,
-    reservedSlots: 0,
-    maxSlots: 20,
+    capacity: 20,
     search: "",
     rarityFilter: "",
   };
@@ -45,31 +46,36 @@ export function createInventoryModule(appCtx) {
     }
     const res = await apiRequest(ENDPOINTS.inventoryMe);
     if (!res.ok) {
-      showToast("Không tải được Kho đồ", problemMessage(res), "danger");
+      showToast("Không tải được Kho đồ (INV-01)", problemMessage(res), "danger");
       render();
       return;
     }
     const d = res.data || {};
-    state.items = d.items || (Array.isArray(d) ? d : []);
-    state.usedSlots = d.usedSlots ?? state.items.length;
-    state.reservedSlots = d.reservedSlots ?? 0;
-    state.maxSlots = d.maxSlots ?? d.capacity ?? 20;
+    // InventoryViewDto: { userId, capacity, usedSlots, items } — usedSlots đã bao gồm ReservedSlots
+    state.items = Array.isArray(d.items) ? d.items : [];
+    state.usedSlots = Number(d.usedSlots ?? state.items.length);
+    state.capacity = Number(d.capacity ?? 20);
     render();
   }
 
   function openCreateListingModal(item) {
-    const itemId = item.id || item.itemInstanceId;
-    const defaultPrice = item.suggestedPriceGem || item.floorPriceGem || 1000;
+    const itemId = item.itemId;
+    const quantity = Number(item.quantity ?? 1);
+    const defaultUnitPrice = 1000;
     let currentKey = newUuid();
     let pendingPollTimer = null;
 
     const modalBody = openModal(
-      `Đăng bán vật phẩm (MKT-01) — ${item.name || item.itemName || "Item"}`,
+      `Đăng bán vật phẩm (MKT-01) — ${item.name}`,
       `
       <div class="alert alert-info">
-        <strong>Vật phẩm:</strong> ${escapeHtml(item.name || item.itemName)}
-        <span class="badge rarity-${rarityClass(item.rarity)}" style="margin-left:6px;">${escapeHtml(item.rarity || "Common")}</span>
-        <div style="margin-top:6px;">${renderIdChip(itemId, "ItemId")}</div>
+        <strong>Vật phẩm:</strong> ${escapeHtml(item.name)} (x${escapeHtml(quantity)})
+        <span class="badge rarity-${rarityClass(item.rarity)}" style="margin-left:6px;">${escapeHtml(item.rarity)}</span>
+        <span class="badge badge-muted" style="margin-left:4px;">${escapeHtml(item.category)}</span>
+        <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;">
+          ${renderIdChip(itemId, "itemId")}
+          ${renderIdChip(item.templateId, "templateId")}
+        </div>
       </div>
 
       <form id="createListingForm">
@@ -80,15 +86,19 @@ export function createInventoryModule(appCtx) {
         </div>
 
         <div class="form-row">
+          <div class="form-group" style="max-width:150px;">
+            <label for="listQuantity">Số lượng (quantity)</label>
+            <input id="listQuantity" type="number" min="1" step="1" required value="${escapeHtml(quantity)}" readonly title="Quy tắc MVP: đăng bán nguyên stack" />
+          </div>
           <div class="form-group">
-            <label for="listPriceGem">Giá niêm yết (Gem - số nguyên)</label>
-            <input id="listPriceGem" type="number" min="1" step="1" required value="${escapeHtml(defaultPrice)}" />
+            <label for="listUnitPrice">Đơn giá — unitPrice (Gem / 1 item)</label>
+            <input id="listUnitPrice" type="number" min="1" step="1" required value="${escapeHtml(defaultUnitPrice)}" />
           </div>
         </div>
 
         <div class="fee-preview">
           <div class="fee-preview-row">
-            <span class="text-muted">Giá niêm yết (grossGem):</span>
+            <span class="text-muted">Tổng giá trị (grossGem = unitPrice × quantity):</span>
             <span id="previewGross" class="mono">0 Gem</span>
           </div>
           <div class="fee-preview-row">
@@ -121,9 +131,10 @@ export function createInventoryModule(appCtx) {
 
     if (!modalBody) return;
 
-    const priceInput = modalBody.querySelector("#listPriceGem");
+    const priceInput = modalBody.querySelector("#listUnitPrice");
+    const qtyInput = modalBody.querySelector("#listQuantity");
     const updateFeePreview = () => {
-      const { gross, fee, net } = computeListingFeeBigInt(priceInput.value);
+      const { gross, fee, net } = computeListingFeeBigInt(priceInput.value, qtyInput.value);
       modalBody.querySelector("#previewGross").textContent = `${formatGem(gross)} Gem`;
       modalBody.querySelector("#previewFee").textContent = `-${formatGem(fee)} Gem`;
       modalBody.querySelector("#previewNet").textContent = `${formatGem(net)} Gem`;
@@ -143,48 +154,49 @@ export function createInventoryModule(appCtx) {
       const submitBtn = modalBody.querySelector("#btnSubmitListing");
       const statusBox = modalBody.querySelector("#pendingLockStatus");
       const idemKey = modalBody.querySelector("#listIdemKey").value.trim() || newUuid();
-      const priceGem = Number(priceInput.value);
+      const unitPrice = Number(priceInput.value);
+      const qty = Number(qtyInput.value);
 
-      if (!Number.isInteger(priceGem) || priceGem <= 0) {
-        showToast("Giá không hợp lệ", "Vui lòng nhập số nguyên Gem lớn hơn 0.", "warning");
+      if (!Number.isInteger(unitPrice) || unitPrice <= 0) {
+        showToast("Đơn giá không hợp lệ", "Vui lòng nhập số nguyên Gem lớn hơn 0.", "warning");
         return;
       }
 
       submitBtn.disabled = true;
+      // MKT-01: CreateListingRequest = { itemId, quantity, unitPrice }
       const res = await apiRequest(ENDPOINTS.listings, {
         method: "POST",
         idempotencyKey: idemKey,
-        body: { itemInstanceId: itemId, priceGem },
+        body: { itemId, quantity: qty, unitPrice },
       });
 
       if (!res.ok) {
         submitBtn.disabled = false;
-        showToast("Đăng bán thất bại", problemMessage(res), "danger");
+        showToast("Đăng bán thất bại (MKT-01)", problemMessage(res), "danger");
         return;
       }
 
-      const listingId = res.data?.listingId || res.data?.id;
+      const listingId = res.data?.listingId;
       const listingStatus = String(res.data?.status || "");
 
-      // Xử lý HTTP 202 PendingLock -> poll tới khi Active hoặc Failed
-      if (res.status === 202 || listingStatus.toLowerCase() === "pendinglock") {
+      if (res.status === 202 || listingStatus === "PendingLock") {
         statusBox.className = "alert alert-warning";
-        statusBox.innerHTML = `<span class="spinner"></span> Nhận <strong>202 PendingLock</strong> — đang chờ InventoryService khóa vật phẩm (${escapeHtml(listingId || "")})...`;
+        statusBox.innerHTML = `<span class="spinner"></span> Nhận <strong>202 PendingLock</strong> — đang chờ Inventory khóa vật phẩm (${escapeHtml(listingId || "")})...`;
 
         if (listingId) {
           let attempts = 0;
           pendingPollTimer = setInterval(async () => {
             attempts += 1;
             const check = await apiRequest(ENDPOINTS.listingDetail(listingId));
-            const st = String(check.data?.status || "").toLowerCase();
-            if (check.ok && ["active", "open"].includes(st)) {
+            const st = String(check.data?.status || "");
+            if (check.ok && st === "Active") {
               clearInterval(pendingPollTimer);
               pendingPollTimer = null;
-              showToast("Đăng bán thành công", `Tin ${listingId} đã mở bán (Active).`, "success");
+              showToast("Đăng bán thành công", `Tin ${listingId} đã Active.`, "success");
               closeModal();
               await loadInventory();
               appCtx.refreshTab("marketplace");
-            } else if ((check.ok && ["failed", "rejected", "cancelled"].includes(st)) || attempts >= 20) {
+            } else if ((check.ok && ["CreateFailed", "Cancelled"].includes(st)) || attempts >= 20) {
               clearInterval(pendingPollTimer);
               pendingPollTimer = null;
               submitBtn.disabled = false;
@@ -196,7 +208,7 @@ export function createInventoryModule(appCtx) {
         return;
       }
 
-      showToast("Đăng bán thành công", `Đã niêm yết với giá ${formatGem(priceGem)} Gem.`, "success");
+      showToast("Đăng bán thành công (201 Active)", `Đơn giá ${formatGem(unitPrice)} Gem (gross ${formatGem(res.data?.grossGem ?? unitPrice * qty)} Gem).`, "success");
       closeModal();
       await loadInventory();
       appCtx.refreshTab("marketplace");
@@ -209,12 +221,13 @@ export function createInventoryModule(appCtx) {
       return;
     }
 
-    const totalOccupied = state.usedSlots + state.reservedSlots;
-    const pct = Math.min(100, Math.round((totalOccupied / Math.max(1, state.maxSlots)) * 100));
-    const isFull = totalOccupied >= state.maxSlots;
+    // usedSlots từ INV-01 ĐÃ bao gồm ReservedSlots — tuyệt đối không cộng đôi
+    const reservedEstimate = Math.max(0, state.usedSlots - state.items.length);
+    const pct = Math.min(100, Math.round((state.usedSlots / Math.max(1, state.capacity)) * 100));
+    const isFull = state.usedSlots >= state.capacity;
 
     const filtered = state.items.filter((it) => {
-      const name = String(it.name || it.itemName || "").toLowerCase();
+      const name = String(it.name || "").toLowerCase();
       const matchQ = !state.search || name.includes(state.search.toLowerCase());
       const matchRarity = !state.rarityFilter || String(it.rarity || "").toLowerCase() === state.rarityFilter;
       return matchQ && matchRarity;
@@ -225,7 +238,7 @@ export function createInventoryModule(appCtx) {
         <div class="card-header">
           <div>
             <h3 class="card-title">Kho đồ cá nhân (INV-01 & MKT-01)</h3>
-            <p class="card-subtitle">Theo dõi sức chứa gồm cả ReservedSlots khi đang có lệnh mua chưa hoàn tất</p>
+            <p class="card-subtitle"><code>usedSlots</code> từ API đã bao gồm <code>ReservedSlots</code> dự trữ khi chờ reverse/finalize</p>
           </div>
           <button id="btnRefreshInventory" type="button" class="btn btn-sm btn-secondary">↻ Làm mới kho</button>
         </div>
@@ -233,8 +246,8 @@ export function createInventoryModule(appCtx) {
         <div class="capacity-bar-wrap">
           <div class="capacity-header">
             <span>
-              Sức chứa: <strong>${totalOccupied} / ${state.maxSlots}</strong> ô
-              <span class="text-muted">(Đang dùng: ${state.usedSlots} • ReservedSlots: ${state.reservedSlots})</span>
+              Sức chứa: <strong>${state.usedSlots} / ${state.capacity}</strong> ô
+              <span class="text-muted">(Số item hiện tại: ${state.items.length}${reservedEstimate > 0 ? ` • ReservedSlots: ${reservedEstimate}` : ""})</span>
             </span>
             <span class="${isFull ? "text-danger" : "text-accent"}" style="font-weight:700;">${pct}%</span>
           </div>
@@ -246,7 +259,7 @@ export function createInventoryModule(appCtx) {
         <div class="form-row">
           <div class="form-group">
             <label for="invSearchInput">Tìm theo tên vật phẩm</label>
-            <input id="invSearchInput" type="text" value="${escapeHtml(state.search)}" placeholder="VD: Dragon Blade..." />
+            <input id="invSearchInput" type="text" value="${escapeHtml(state.search)}" placeholder="VD: Dragon Fang Sword..." />
           </div>
           <div class="form-group" style="max-width:200px;">
             <label for="invRaritySelect">Độ hiếm (Rarity)</label>
@@ -268,37 +281,42 @@ export function createInventoryModule(appCtx) {
                 ${filtered
                   .map((item, idx) => {
                     const rCls = rarityClass(item.rarity);
-                    const status = item.status || "Available";
-                    const canSell = ["available", "idle", "unlocked"].includes(String(status).toLowerCase());
+                    const canSell = Boolean(item.tradable) && item.status === "Available";
+                    const disabledReason = !item.tradable
+                      ? "Không thể giao dịch"
+                      : item.status === "Locked"
+                        ? "Đang khóa (Locked)"
+                        : "Đang chờ tất toán (PendingSettlement)";
                     return `
                       <div class="item-card rarity-border-${rCls}">
                         <div>
                           <div class="item-card-top">
-                            <div class="item-name">${escapeHtml(item.name || item.itemName || "Vật phẩm")}</div>
-                            ${statusBadge(status)}
+                            <div class="item-name">${escapeHtml(item.name)} <span class="text-accent mono">×${escapeHtml(item.quantity)}</span></div>
+                            ${statusBadge(item.status)}
                           </div>
                           <div class="item-meta">
-                            <span class="badge rarity-${rCls}">${escapeHtml(item.rarity || "Common")}</span>
-                            ${item.category ? `<span class="badge badge-muted">${escapeHtml(item.category)}</span>` : ""}
-                            ${item.level !== undefined ? `<span class="badge badge-info">Lv.${escapeHtml(item.level)}</span>` : ""}
+                            <span class="badge rarity-${rCls}">${escapeHtml(item.rarity)}</span>
+                            <span class="badge badge-muted">${escapeHtml(item.category)}</span>
+                            ${item.tradable ? `<span class="badge badge-success">Tradable</span>` : `<span class="badge badge-danger">Non-Tradable</span>`}
                           </div>
                         </div>
 
                         <div class="item-kv-list">
                           <div class="item-kv">
-                            <span class="text-muted">Instance ID</span>
-                            ${renderIdChip(item.id || item.itemInstanceId)}
+                            <span class="text-muted">itemId</span>
+                            ${renderIdChip(item.itemId)}
                           </div>
-                          ${
-                            item.templateCode
-                              ? `<div class="item-kv"><span class="text-muted">Template</span><span class="mono">${escapeHtml(item.templateCode)}</span></div>`
-                              : ""
-                          }
+                          <div class="item-kv">
+                            <span class="text-muted">templateId</span>
+                            ${renderIdChip(item.templateId)}
+                          </div>
+                          ${item.listingId ? `<div class="item-kv"><span class="text-muted">listingId</span>${renderIdChip(item.listingId)}</div>` : ""}
+                          ${item.tradeId ? `<div class="item-kv"><span class="text-muted">tradeId</span>${renderIdChip(item.tradeId)}</div>` : ""}
                         </div>
 
                         <div class="item-actions">
                           <button type="button" class="btn btn-sm btn-primary" data-sell-idx="${idx}" ${!canSell ? "disabled" : ""}>
-                            ${canSell ? "Đăng bán (MKT-01)" : "Đang khóa / niêm yết"}
+                            ${canSell ? "Đăng bán (MKT-01)" : disabledReason}
                           </button>
                         </div>
                       </div>
@@ -326,7 +344,9 @@ export function createInventoryModule(appCtx) {
     panel.querySelectorAll("[data-sell-idx]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const item = filteredItems[Number(btn.dataset.sellIdx)];
-        if (item) openCreateListingModal(item);
+        if (item && item.tradable && item.status === "Available") {
+          openCreateListingModal(item);
+        }
       });
     });
   }
