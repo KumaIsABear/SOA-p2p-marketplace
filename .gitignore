@@ -28,3 +28,5 @@ backups/
 # OS
 .DS_Store
 Thumbs.db
+
+tests/k6/*-summary.json
