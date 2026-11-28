@@ -51,24 +51,30 @@
 
     <!-- Main Navigation Tabs -->
     <nav class="main-nav" aria-label="Điều hướng chính">
-      <button class="nav-tab active" data-tab="auth" type="button">
+      <button class="nav-tab active" data-tab="auth" data-roles="ALL" type="button">
         <span class="tab-dot"></span> Đăng nhập & Phiên
       </button>
-      <button class="nav-tab" data-tab="wallet" type="button">
+      <button class="nav-tab" data-tab="wallet" data-roles="Player" type="button">
         <span class="tab-dot"></span> Ví Gem & ZaloPay
       </button>
-      <button class="nav-tab" data-tab="inventory" type="button">
+      <button class="nav-tab" data-tab="inventory" data-roles="Player" type="button">
         <span class="tab-dot"></span> Kho đồ
       </button>
-      <button class="nav-tab" data-tab="marketplace" type="button">
+      <button class="nav-tab" data-tab="marketplace" data-roles="Player" type="button">
         <span class="tab-dot"></span> Chợ P2P
       </button>
-      <button class="nav-tab nav-tab-admin" data-tab="gm" type="button">
+      <button class="nav-tab nav-tab-admin" data-tab="gm" data-roles="GM" type="button">
         <span class="tab-dot"></span> GM (Analytics & Giá)
       </button>
-      <button class="nav-tab nav-tab-admin" data-tab="cs" type="button">
+      <button class="nav-tab nav-tab-admin" data-tab="cs" data-roles="CS" type="button">
         <span class="tab-dot"></span> CS (Tra soát & Moderation)
       </button>
+
+      <div class="nav-spacer"></div>
+      <label class="checkbox-inline rbac-toggle" title="Hiện tất cả tab ngoài quyền để test lỗi 403 FORBIDDEN từ Gateway & Service">
+        <input id="chkDemoRbac" type="checkbox" />
+        Demo RBAC (hiện mọi tab)
+      </label>
     </nav>
 
     <!-- Main Content Panels -->
@@ -77,24 +83,8 @@
       <section id="panel-wallet" class="tab-panel"></section>
       <section id="panel-inventory" class="tab-panel"></section>
       <section id="panel-marketplace" class="tab-panel"></section>
-      <section id="panel-gm" class="tab-panel">
-        <div class="card empty-placeholder">
-          <h3>GM Portal — Chờ tích hợp ở Phần 2</h3>
-          <p class="text-muted">
-            Module <code>gm.js</code> (ADM-01..04: Market Overview, Analytics History, Price Policies) sẽ gắn vào container
-            <code>#panel-gm</code> thông qua hook <code>registerTabModule("gm", ...)</code> trong <code>js/app.js</code>.
-          </p>
-        </div>
-      </section>
-      <section id="panel-cs" class="tab-panel">
-        <div class="card empty-placeholder">
-          <h3>Customer Support Portal — Chờ tích hợp ở Phần 2</h3>
-          <p class="text-muted">
-            Module <code>cs.js</code> (ADM-05..07: Trade Trace 3-service, Search Trades, User Moderation) sẽ gắn vào container
-            <code>#panel-cs</code> thông qua hook <code>registerTabModule("cs", ...)</code> trong <code>js/app.js</code>.
-          </p>
-        </div>
-      </section>
+      <section id="panel-gm" class="tab-panel"></section>
+      <section id="panel-cs" class="tab-panel"></section>
     </main>
 
     <!-- Toast Container -->

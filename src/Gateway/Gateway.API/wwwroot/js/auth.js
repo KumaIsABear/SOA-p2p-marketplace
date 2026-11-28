@@ -1,5 +1,6 @@
 import {
   ENDPOINTS,
+  SEED_USERS,
   apiRequest,
   clearSession,
   escapeHtml,
@@ -12,12 +13,14 @@ import {
 } from "./api.js";
 
 const SEED_ACCOUNTS = [
-  { label: "Player 1 (Seller)", email: "player1@demo.local", password: "Password123!" },
-  { label: "Player 2 (Buyer)", email: "player2@demo.local", password: "Password123!" },
-  { label: "Restricted User", email: "restricted@demo.local", password: "Password123!" },
-  { label: "GM Admin", email: "gm@demo.local", password: "Password123!" },
-  { label: "CS Staff", email: "cs@demo.local", password: "Password123!" },
+  SEED_USERS.seller,
+  SEED_USERS.buyer,
+  SEED_USERS.buyerFull,
+  SEED_USERS.gm,
+  SEED_USERS.cs,
 ];
+
+const SEED_PW_STORAGE_KEY = "p2p_demo_seed_password";
 
 let demoConfig = { googleClientId: "" };
 let gisInitialized = false;
@@ -39,7 +42,7 @@ export function createAuthModule(appCtx) {
 
     const clientId = demoConfig?.googleClientId || "";
     if (!clientId) {
-      if (statusEl) statusEl.textContent = "Chưa cấu hình googleClientId từ /api/v1/auth/demo-config.";
+      if (statusEl) statusEl.textContent = "Chưa cấu hình Google:ClientId từ GET /demo-config (để trống GOOGLE_CLIENT_ID trong .env).";
       return;
     }
 
@@ -64,7 +67,7 @@ export function createAuthModule(appCtx) {
       shape: "rectangular",
       text: "signin_with",
     });
-    if (statusEl) statusEl.textContent = `GIS sẵn sàng (${clientId.slice(0, 18)}…)`;
+    if (statusEl) statusEl.textContent = `GIS sẵn sàng (${clientId.slice(0, 22)}…)`;
   }
 
   async function handleGoogleCredential(response) {
@@ -78,15 +81,15 @@ export function createAuthModule(appCtx) {
       showToast("Đăng nhập Google thất bại", problemMessage(res), "danger");
       return;
     }
-    applyAuthPayload(res.data, "Đăng nhập Google thành công");
+    applyAuthPayload(res.data, "Đăng nhập Google thành công (AUTH-02)");
   }
 
   function applyAuthPayload(payload, toastTitle) {
-    const accessToken = payload?.accessToken || payload?.token;
+    const accessToken = payload?.accessToken;
     const refreshToken = payload?.refreshToken;
-    const user = payload?.user || payload?.profile || null;
+    const user = payload?.user || null;
     setSession({ accessToken, refreshToken, user });
-    showToast(toastTitle, user?.email || user?.displayName || "Phiên đã sẵn sàng", "success");
+    showToast(toastTitle, `${user?.displayName || user?.email || ""} (${user?.role || ""})`, "success");
     fetchMe(true);
     appCtx.refreshAllActiveData();
   }
@@ -99,11 +102,13 @@ export function createAuthModule(appCtx) {
     }
     const res = await apiRequest(ENDPOINTS.authMe);
     if (!res.ok) {
-      if (!silent) showToast("Lỗi /auth/me", problemMessage(res), "danger");
+      if (!silent) showToast("Lỗi AUTH-05 (/auth/me)", problemMessage(res), "danger");
       return null;
     }
     setSession({ user: res.data });
-    if (!silent) showToast("Đã xác thực /auth/me", `${res.data.displayName || res.data.email} (${res.data.role})`, "success");
+    if (!silent) {
+      showToast("AUTH-05 (/auth/me)", `${res.data.displayName || res.data.email} • ${res.data.role} • ${res.data.status}`, "success");
+    }
     render();
     return res.data;
   }
@@ -113,34 +118,45 @@ export function createAuthModule(appCtx) {
     if (refreshToken) {
       await apiRequest(ENDPOINTS.authLogout, {
         method: "POST",
+        auth: false,
         body: { refreshToken },
         retryOn401: false,
       });
     }
     clearSession();
-    showToast("Đã đăng xuất", "Đã xóa token phiên hiện tại.", "info");
+    showToast("Đã đăng xuất (AUTH-04)", "Refresh token đã được thu hồi và xóa phiên local.", "info");
     render();
   }
 
   function render() {
     const session = getSession();
     const user = session.user;
+    const savedSeedPw = sessionStorage.getItem(SEED_PW_STORAGE_KEY) || "";
 
     panel.innerHTML = `
       <div class="grid-2">
-        <!-- AUTH-02: Login -->
+        <!-- AUTH-01: Seed Account Login -->
         <div class="card">
           <div class="card-header">
             <div>
-              <h3 class="card-title">Đăng nhập (AUTH-02 / AUTH-03)</h3>
-              <p class="card-subtitle">Điền nhanh tài khoản seed hoặc đăng nhập Google Identity Services</p>
+              <h3 class="card-title">Đăng nhập tài khoản Seed (AUTH-01)</h3>
+              <p class="card-subtitle"><code>POST /api/v1/auth/login</code> — không có public register theo Contract</p>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="seedPasswordInput">Seed Password chung (từ <code>AUTH_SEED_PASSWORD</code> trong .env)</label>
+              <input id="seedPasswordInput" type="password" value="${escapeHtml(savedSeedPw)}" placeholder="Nhập AUTH_SEED_PASSWORD để điền nhanh..." autocomplete="off" />
             </div>
           </div>
 
           <div class="seed-buttons">
             ${SEED_ACCOUNTS.map(
               (acc, idx) =>
-                `<button type="button" class="btn btn-xs btn-secondary" data-seed-idx="${idx}">${escapeHtml(acc.label)}</button>`
+                `<button type="button" class="btn btn-xs btn-secondary" data-seed-idx="${idx}" title="${escapeHtml(acc.email)}">
+                  ${escapeHtml(acc.label)} (${escapeHtml(acc.role)})
+                </button>`
             ).join("")}
           </div>
 
@@ -148,58 +164,44 @@ export function createAuthModule(appCtx) {
             <div class="form-row">
               <div class="form-group">
                 <label for="loginEmail">Email</label>
-                <input id="loginEmail" type="email" required placeholder="player1@demo.local" />
+                <input id="loginEmail" type="email" required placeholder="seller@marketplace.local" />
               </div>
               <div class="form-group">
                 <label for="loginPassword">Mật khẩu</label>
-                <input id="loginPassword" type="password" required placeholder="••••••••" />
+                <input id="loginPassword" type="password" required placeholder="Nhập mật khẩu" />
               </div>
             </div>
             <div class="form-row">
-              <button type="submit" class="btn btn-primary">Đăng nhập</button>
-              <div id="gisButtonSlot" class="gis-container"></div>
+              <button type="submit" class="btn btn-primary">Đăng nhập (AUTH-01)</button>
             </div>
-            <div id="gisStatusText" class="text-muted" style="font-size:12px;"></div>
           </form>
         </div>
 
-        <!-- AUTH-01: Register -->
+        <!-- AUTH-02: Google Sign-In -->
         <div class="card">
           <div class="card-header">
             <div>
-              <h3 class="card-title">Đăng ký tài khoản mới (AUTH-01)</h3>
-              <p class="card-subtitle">Tự động khởi tạo Ví Gem và Kho đồ thông qua sự kiện đăng ký</p>
+              <h3 class="card-title">Đăng nhập Google Identity Services (AUTH-02)</h3>
+              <p class="card-subtitle"><code>POST /api/v1/auth/google</code> — JIT tạo tài khoản <code>Player</code> nếu chưa có</p>
             </div>
+            <button id="btnReloadDemoConfig" type="button" class="btn btn-xs btn-secondary">↻ Tải /demo-config</button>
           </div>
 
-          <form id="registerForm">
-            <div class="form-row">
-              <div class="form-group">
-                <label for="regDisplayName">Tên hiển thị</label>
-                <input id="regDisplayName" type="text" required placeholder="DragonSlayer99" />
-              </div>
-              <div class="form-group">
-                <label for="regEmail">Email</label>
-                <input id="regEmail" type="email" required placeholder="newplayer@demo.local" />
-              </div>
-            </div>
-            <div class="form-row">
-              <div class="form-group">
-                <label for="regPassword">Mật khẩu</label>
-                <input id="regPassword" type="password" required minlength="6" placeholder="Tối thiểu 6 ký tự" />
-              </div>
-              <button type="submit" class="btn btn-success">Tạo tài khoản</button>
-            </div>
-          </form>
+          <div class="alert alert-info">
+            Client ID được đọc chỉ-đọc từ <code>GET /demo-config</code> trên <strong>Gateway.API</strong> (same-origin, không lộ secret).
+          </div>
+
+          <div id="gisButtonSlot" class="gis-container" style="margin-bottom:8px;"></div>
+          <div id="gisStatusText" class="text-muted" style="font-size:12px;"></div>
         </div>
       </div>
 
-      <!-- AUTH-04 / AUTH-05: Session Overview -->
+      <!-- AUTH-03 / AUTH-04 / AUTH-05: Session Overview -->
       <div class="card">
         <div class="card-header">
           <div>
-            <h3 class="card-title">Trạng thái Phiên hiện tại (AUTH-04 / AUTH-05)</h3>
-            <p class="card-subtitle">Token được giữ trong localStorage và tự động refresh khi gặp HTTP 401</p>
+            <h3 class="card-title">Trạng thái Phiên hiện tại (AUTH-03 / AUTH-04 / AUTH-05)</h3>
+            <p class="card-subtitle">Access token tự động rotate qua <code>/api/v1/auth/refresh</code> khi gặp HTTP 401</p>
           </div>
           <div class="header-actions">
             <button id="btnPanelMe" type="button" class="btn btn-sm btn-secondary" ${!session.isAuthenticated ? "disabled" : ""}>Gọi /auth/me</button>
@@ -213,12 +215,13 @@ export function createAuthModule(appCtx) {
           <div class="grid-4">
             <div class="stat-box">
               <div class="stat-label">Người dùng</div>
-              <div class="stat-value" style="font-size:18px;">${escapeHtml(user.displayName || user.username || user.email)}</div>
+              <div class="stat-value" style="font-size:18px;">${escapeHtml(user.displayName || user.email)}</div>
               <div class="stat-meta">${escapeHtml(user.email || "")}</div>
             </div>
             <div class="stat-box">
               <div class="stat-label">User ID</div>
-              <div class="stat-meta" style="margin-top:8px;">${renderIdChip(user.id || user.userId)}</div>
+              <div class="stat-meta" style="margin-top:8px;">${renderIdChip(user.userId)}</div>
+              <div class="stat-meta">Version: <strong class="mono">v${escapeHtml(user.version ?? "—")}</strong></div>
             </div>
             <div class="stat-box">
               <div class="stat-label">Vai trò (Role)</div>
@@ -229,7 +232,7 @@ export function createAuthModule(appCtx) {
               <div style="margin-top:8px;">${statusBadge(user.status || "Active")}</div>
             </div>
           </div>`
-            : `<div class="alert alert-info mb-0">Chưa có phiên đăng nhập. Hãy chọn nhanh một tài khoản seed ở trên hoặc đăng ký mới.</div>`
+            : `<div class="alert alert-info mb-0">Chưa có phiên đăng nhập. Nhập Seed Password (hoặc gõ tay) và chọn một tài khoản seed ở trên, hoặc đăng nhập bằng Google.</div>`
         }
       </div>
     `;
@@ -239,13 +242,28 @@ export function createAuthModule(appCtx) {
   }
 
   function bindEvents() {
+    panel.querySelector("#seedPasswordInput")?.addEventListener("input", (e) => {
+      sessionStorage.setItem(SEED_PW_STORAGE_KEY, e.target.value);
+    });
+
     panel.querySelectorAll("[data-seed-idx]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const acc = SEED_ACCOUNTS[Number(btn.dataset.seedIdx)];
         if (!acc) return;
         panel.querySelector("#loginEmail").value = acc.email;
-        panel.querySelector("#loginPassword").value = acc.password;
+        const seedPw = panel.querySelector("#seedPasswordInput")?.value || "";
+        if (seedPw) {
+          panel.querySelector("#loginPassword").value = seedPw;
+        } else {
+          panel.querySelector("#loginPassword").focus();
+        }
       });
+    });
+
+    panel.querySelector("#btnReloadDemoConfig")?.addEventListener("click", async () => {
+      gisInitialized = false;
+      await loadDemoConfig();
+      renderGoogleButton();
     });
 
     panel.querySelector("#loginForm")?.addEventListener("submit", async (e) => {
@@ -262,29 +280,6 @@ export function createAuthModule(appCtx) {
         return;
       }
       applyAuthPayload(res.data, "Đăng nhập thành công");
-    });
-
-    panel.querySelector("#registerForm")?.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const displayName = panel.querySelector("#regDisplayName").value.trim();
-      const email = panel.querySelector("#regEmail").value.trim();
-      const password = panel.querySelector("#regPassword").value;
-      const res = await apiRequest(ENDPOINTS.authRegister, {
-        method: "POST",
-        auth: false,
-        body: { displayName, email, password },
-      });
-      if (!res.ok) {
-        showToast("Đăng ký thất bại", problemMessage(res), "danger");
-        return;
-      }
-      if (res.data?.accessToken || res.data?.token) {
-        applyAuthPayload(res.data, "Đăng ký & đăng nhập thành công");
-      } else {
-        showToast("Đăng ký thành công", "Hãy đăng nhập bằng tài khoản vừa tạo.", "success");
-        panel.querySelector("#loginEmail").value = email;
-        panel.querySelector("#loginPassword").value = password;
-      }
     });
 
     panel.querySelector("#btnPanelMe")?.addEventListener("click", () => fetchMe(false));

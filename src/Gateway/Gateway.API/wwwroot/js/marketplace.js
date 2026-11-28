@@ -6,6 +6,7 @@ import {
   formatDateTime,
   formatGem,
   getSession,
+  getTemplateName,
   newUuid,
   openModal,
   problemMessage,
@@ -16,10 +17,10 @@ import {
 } from "./api.js";
 
 const SAGA_MAIN_STEPS = [
-  { key: "Initiated", label: "1. Initiated" },
-  { key: "FundsReserved", label: "2. FundsReserved" },
-  { key: "ItemTransferred", label: "3. ItemTransferred" },
-  { key: "FundsSettled", label: "4. FundsSettled" },
+  { key: "HoldingFunds", label: "1. HoldingFunds" },
+  { key: "Transferring", label: "2. Transferring" },
+  { key: "Settling", label: "3. Settling" },
+  { key: "Finalizing", label: "4. Finalizing" },
   { key: "Completed", label: "5. Completed" },
 ];
 
@@ -29,24 +30,52 @@ const SAGA_COMP_STEPS = [
   { key: "Failed", label: "Kết thúc: Failed" },
 ];
 
+const LISTING_STATUSES = ["PendingLock", "Active", "Processing", "Sold", "Cancelled", "CreateFailed"];
+const TRADE_STATUSES = [
+  "HoldingFunds",
+  "Transferring",
+  "Settling",
+  "Finalizing",
+  "ReversingItem",
+  "ReleasingFunds",
+  "Completed",
+  "Failed",
+];
+
+function computeFeeBigInt(gross) {
+  try {
+    return (BigInt(String(gross ?? 0)) * 500n) / 10000n;
+  } catch {
+    return 0n;
+  }
+}
+
 export function createMarketplaceModule(appCtx) {
   const panel = document.getElementById("panel-marketplace");
 
   const state = {
     subTab: "catalog", // catalog | mine | history
-    filters: { q: "", rarity: "", minPrice: "", maxPrice: "", sort: "newest" },
+    filters: { q: "", category: "", rarity: "", minPrice: "", maxPrice: "", sort: "newest" },
     catalog: { items: [], page: 1, pageSize: 12, totalCount: 0 },
-    mine: { items: [] },
-    history: { items: [], page: 1, pageSize: 15, totalCount: 0 },
+    mine: { items: [], status: "Active", page: 1, pageSize: 15, totalCount: 0 },
+    history: { items: [], side: "all", status: "Completed", page: 1, pageSize: 15, totalCount: 0 },
     buyIdemKey: newUuid(),
   };
 
   async function loadCurrentSubTab() {
+    if (!getSession().isAuthenticated) {
+      state.catalog.items = [];
+      state.mine.items = [];
+      state.history.items = [];
+      render();
+      return;
+    }
+
     if (state.subTab === "catalog") {
       const res = await apiRequest(ENDPOINTS.listings, {
-        auth: getSession().isAuthenticated,
         query: {
           q: state.filters.q,
+          category: state.filters.category,
           rarity: state.filters.rarity,
           minPrice: state.filters.minPrice,
           maxPrice: state.filters.maxPrice,
@@ -57,30 +86,41 @@ export function createMarketplaceModule(appCtx) {
       });
       if (res.ok && res.data) {
         const d = res.data;
-        state.catalog.items = d.items || (Array.isArray(d) ? d : []);
+        state.catalog.items = Array.isArray(d.items) ? d.items : [];
         state.catalog.totalCount = d.totalCount ?? state.catalog.items.length;
+      } else if (!res.ok) {
+        showToast("Lỗi tải Chợ P2P (MKT-04)", problemMessage(res), "danger");
       }
     } else if (state.subTab === "mine") {
-      if (getSession().isAuthenticated) {
-        const res = await apiRequest(ENDPOINTS.listingsMine);
-        if (res.ok && res.data) {
-          state.mine.items = res.data.items || (Array.isArray(res.data) ? res.data : []);
-        }
-      } else {
-        state.mine.items = [];
+      const res = await apiRequest(ENDPOINTS.listingsMine, {
+        query: {
+          status: state.mine.status,
+          page: state.mine.page,
+          pageSize: state.mine.pageSize,
+        },
+      });
+      if (res.ok && res.data) {
+        const d = res.data;
+        state.mine.items = Array.isArray(d.items) ? d.items : [];
+        state.mine.totalCount = d.totalCount ?? state.mine.items.length;
+      } else if (!res.ok) {
+        showToast("Lỗi tải Tin của tôi (MKT-06)", problemMessage(res), "danger");
       }
     } else if (state.subTab === "history") {
-      if (getSession().isAuthenticated) {
-        const res = await apiRequest(ENDPOINTS.tradesMine, {
-          query: { page: state.history.page, pageSize: state.history.pageSize },
-        });
-        if (res.ok && res.data) {
-          const d = res.data;
-          state.history.items = d.items || (Array.isArray(d) ? d : []);
-          state.history.totalCount = d.totalCount ?? state.history.items.length;
-        }
-      } else {
-        state.history.items = [];
+      const res = await apiRequest(ENDPOINTS.tradesMine, {
+        query: {
+          side: state.history.side,
+          status: state.history.status,
+          page: state.history.page,
+          pageSize: state.history.pageSize,
+        },
+      });
+      if (res.ok && res.data) {
+        const d = res.data;
+        state.history.items = Array.isArray(d.items) ? d.items : [];
+        state.history.totalCount = d.totalCount ?? state.history.items.length;
+      } else if (!res.ok) {
+        showToast("Lỗi tải Lịch sử giao dịch (MKT-07)", problemMessage(res), "danger");
       }
     }
     render();
@@ -88,12 +128,14 @@ export function createMarketplaceModule(appCtx) {
 
   // MKT-05: Modal Chi tiết Listing SQL authoritative
   async function openListingDetailModal(listingId, catalogSnapshot = null) {
-    const body = openModal("Chi tiết Listing SQL Authoritative (MKT-05)", `<div class="empty-placeholder"><span class="spinner"></span> Đang tải snapshot SQL...</div>`, { large: true });
+    const body = openModal(
+      "Chi tiết Listing SQL Authoritative (MKT-05)",
+      `<div class="empty-placeholder"><span class="spinner"></span> Đang tải snapshot SQL...</div>`,
+      { large: true }
+    );
     if (!body) return;
 
-    const res = await apiRequest(ENDPOINTS.listingDetail(listingId), {
-      auth: getSession().isAuthenticated,
-    });
+    const res = await apiRequest(ENDPOINTS.listingDetail(listingId));
 
     if (!res.ok) {
       body.innerHTML = `<div class="alert alert-danger">${escapeHtml(problemMessage(res))}</div>`;
@@ -101,19 +143,23 @@ export function createMarketplaceModule(appCtx) {
     }
 
     const sql = res.data || {};
+    const feeEst = computeFeeBigInt(sql.grossGem);
     body.innerHTML = `
       <div class="grid-2">
         <div class="card mb-0">
           <div class="card-header">
             <h4 class="card-title">SQL Authoritative Snapshot</h4>
-            ${statusBadge(sql.status || "Active")}
+            ${statusBadge(sql.status)}
           </div>
           <div class="item-kv-list">
-            <div class="item-kv"><span class="text-muted">Listing ID</span>${renderIdChip(sql.id || sql.listingId || listingId)}</div>
-            <div class="item-kv"><span class="text-muted">Vật phẩm</span><strong>${escapeHtml(sql.itemName || sql.name || "—")}</strong></div>
-            <div class="item-kv"><span class="text-muted">Giá niêm yết</span><span class="mono text-warning">${formatGem(sql.priceGem)} Gem</span></div>
-            <div class="item-kv"><span class="text-muted">Phí 5% (feeGem)</span><span class="mono">${formatGem(sql.feeGem ?? Math.floor(Number(sql.priceGem || 0) * 0.05))} Gem</span></div>
-            <div class="item-kv"><span class="text-muted">Seller ID</span>${renderIdChip(sql.sellerId)}</div>
+            <div class="item-kv"><span class="text-muted">listingId</span>${renderIdChip(sql.listingId || listingId)}</div>
+            <div class="item-kv"><span class="text-muted">Vật phẩm</span><strong>${escapeHtml(sql.itemName)} (×${escapeHtml(sql.quantity)})</strong></div>
+            <div class="item-kv"><span class="text-muted">Đơn giá (unitPrice)</span><span class="mono">${formatGem(sql.unitPrice)} Gem</span></div>
+            <div class="item-kv"><span class="text-muted">Tổng giá (grossGem)</span><span class="mono text-warning">${formatGem(sql.grossGem)} Gem</span></div>
+            <div class="item-kv"><span class="text-muted">Phí ước tính 5%</span><span class="mono">${formatGem(feeEst)} Gem</span></div>
+            <div class="item-kv"><span class="text-muted">sellerId</span>${renderIdChip(sql.sellerId)}</div>
+            <div class="item-kv"><span class="text-muted">itemId</span>${renderIdChip(sql.itemId)}</div>
+            <div class="item-kv"><span class="text-muted">Version</span><span class="mono">v${escapeHtml(sql.version)}</span></div>
             <div class="item-kv"><span class="text-muted">Cập nhật lúc</span><span>${escapeHtml(formatDateTime(sql.updatedAt || sql.createdAt))}</span></div>
           </div>
         </div>
@@ -126,7 +172,7 @@ export function createMarketplaceModule(appCtx) {
           ${
             catalogSnapshot
               ? `<pre class="json-box">${escapeHtml(JSON.stringify(catalogSnapshot, null, 2))}</pre>`
-              : `<div class="text-muted">Mở từ danh sách không có MongoDB snapshot đi kèm.</div>`
+              : `<div class="text-muted">Mở từ danh sách SQL (không có MongoDB snapshot đi kèm).</div>`
           }
         </div>
       </div>
@@ -143,7 +189,7 @@ export function createMarketplaceModule(appCtx) {
       showToast("Cần đăng nhập", "Hãy đăng nhập tài khoản Buyer trước khi mua.", "warning");
       return;
     }
-    const listingId = listing.id || listing.listingId;
+    const listingId = listing.listingId;
     const keyInput = panel.querySelector("#mktBuyIdemKey");
     const idemKey = (keyInput?.value || state.buyIdemKey || newUuid()).trim();
     state.buyIdemKey = idemKey;
@@ -154,16 +200,19 @@ export function createMarketplaceModule(appCtx) {
     });
 
     if (!res.ok) {
-      showToast("Mua vật phẩm thất bại", problemMessage(res), "danger");
+      showToast("Mua vật phẩm thất bại (MKT-03)", problemMessage(res), "danger");
       return;
     }
 
     const tradeId =
       res.data?.tradeId ||
-      res.data?.id ||
       (res.location ? res.location.split("/").filter(Boolean).pop() : null);
 
-    showToast("Đã gửi lệnh mua (Saga)", `Trade ID: ${tradeId || "đang khởi tạo"}`, "info");
+    showToast(
+      "Đã tiếp nhận lệnh mua (202 Accepted)",
+      `TradeId: ${tradeId || "N/A"} • Gross: ${formatGem(res.data?.grossGem)} Gem`,
+      "info"
+    );
     if (tradeId) {
       openSagaTrackerModal(tradeId, res.data);
     } else {
@@ -172,11 +221,10 @@ export function createMarketplaceModule(appCtx) {
   }
 
   function renderSagaMarkup(tradeId, trade) {
-    const status = String(trade?.status || trade?.state || "Initiated");
-    const lower = status.toLowerCase();
-    const isComp = ["reversingitem", "releasingfunds", "failed"].includes(lower);
-    const mainIdx = SAGA_MAIN_STEPS.findIndex((s) => s.key.toLowerCase() === lower);
-    const compIdx = SAGA_COMP_STEPS.findIndex((s) => s.key.toLowerCase() === lower);
+    const status = String(trade?.status || "HoldingFunds");
+    const isComp = ["ReversingItem", "ReleasingFunds", "Failed"].includes(status);
+    const mainIdx = SAGA_MAIN_STEPS.findIndex((s) => s.key === status);
+    const compIdx = SAGA_COMP_STEPS.findIndex((s) => s.key === status);
 
     return `
       <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;">
@@ -188,7 +236,7 @@ export function createMarketplaceModule(appCtx) {
         ${SAGA_MAIN_STEPS.map((step, i) => {
           let cls = "";
           if (!isComp) {
-            if (mainIdx > i || lower === "completed") cls = "done";
+            if (mainIdx > i || status === "Completed") cls = "done";
             else if (mainIdx === i) cls = "current";
           } else if (i === 0) {
             cls = "done";
@@ -203,7 +251,7 @@ export function createMarketplaceModule(appCtx) {
         <div class="saga-track">
           ${SAGA_COMP_STEPS.map((step, i) => {
             let cls = "";
-            if (lower === "failed" && step.key === "Failed") cls = "failed";
+            if (status === "Failed" && step.key === "Failed") cls = "failed";
             else if (compIdx >= i) cls = "comp";
             return `<div class="saga-step ${cls}">${escapeHtml(step.label)}</div>`;
           }).join("")}
@@ -212,10 +260,20 @@ export function createMarketplaceModule(appCtx) {
       }
 
       ${
-        trade?.failureCode || trade?.failureReason
+        trade?.grossGem !== undefined
+          ? `
+        <div class="kv-grid">
+          <div class="kv-cell"><div class="kv-cell-label">grossGem</div><strong class="mono text-warning">${formatGem(trade.grossGem)} Gem</strong></div>
+          <div class="kv-cell"><div class="kv-cell-label">feeGem (5% TaxBurn)</div><strong class="mono">${formatGem(trade.feeGem)} Gem</strong></div>
+          <div class="kv-cell"><div class="kv-cell-label">sellerNetGem</div><strong class="mono text-success">${formatGem(trade.sellerNetGem)} Gem</strong></div>
+        </div>`
+          : ""
+      }
+
+      ${
+        trade?.failureCode
           ? `<div class="alert alert-danger">
-              <strong>Lỗi Saga (${escapeHtml(trade.failureCode || "FAILED")}):</strong>
-              ${escapeHtml(trade.failureReason || "Giao dịch đã được bồi hoàn tự động.")}
+              <strong>Lỗi Saga (failureCode):</strong> <code>${escapeHtml(trade.failureCode)}</code> — Giao dịch đã kích hoạt nhánh bồi hoàn.
             </div>`
           : ""
       }
@@ -223,7 +281,7 @@ export function createMarketplaceModule(appCtx) {
       ${
         trade?.requiresReview
           ? `<div class="alert alert-warning">
-              <strong>Cảnh báo requiresReview = true:</strong> Bồi hoàn cần nhân viên CS kiểm tra thủ công ở tab CS Moderation.
+              <strong>Cảnh báo requiresReview = true:</strong> Trạng thái chưa xác định hoàn toàn — cần CS kiểm tra bằng <code>ADM-05</code> ở tab CS.
             </div>`
           : ""
       }
@@ -266,17 +324,16 @@ export function createMarketplaceModule(appCtx) {
       const container = body.querySelector("#sagaLiveContainer");
       if (container) container.innerHTML = renderSagaMarkup(tradeId, res.data);
 
-      const st = String(res.data.status || res.data.state || "").toLowerCase();
-      if (["completed", "failed"].includes(st)) {
+      const st = String(res.data.status || "");
+      if (st === "Completed" || st === "Failed") {
         if (timer) {
           clearInterval(timer);
           timer = null;
         }
         const indicator = body.querySelector("#sagaPollIndicator");
         if (indicator) {
-          indicator.textContent = st === "completed" ? "✓ Saga hoàn tất thành công." : "✕ Saga kết thúc với trạng thái Failed.";
+          indicator.textContent = st === "Completed" ? "✓ Saga hoàn tất thành công." : "✕ Saga kết thúc với trạng thái Failed.";
         }
-        // Làm mới chéo Wallet, Inventory và Marketplace
         appCtx.refreshAllActiveData();
       }
     };
@@ -291,24 +348,28 @@ export function createMarketplaceModule(appCtx) {
   async function cancelListing(listingId) {
     const res = await apiRequest(ENDPOINTS.listingCancel(listingId), { method: "DELETE" });
     if (!res.ok) {
-      showToast("Hủy tin thất bại", problemMessage(res), "danger");
+      showToast("Hủy tin thất bại (MKT-02)", problemMessage(res), "danger");
       return;
     }
-    showToast("Đã hủy tin đăng bán", "Vật phẩm đã được mở khóa về Kho đồ.", "success");
+    const unlockStatus = res.data?.inventoryUnlockStatus || "Pending";
+    showToast("Đã hủy tin đăng bán (MKT-02)", `inventoryUnlockStatus: ${unlockStatus} (mở khóa eventual qua RabbitMQ).`, "success");
     await loadCurrentSubTab();
     appCtx.refreshTab("inventory");
   }
 
   function renderCatalogSubTab() {
-    const userId = getSession().user?.id || getSession().user?.userId;
+    if (!getSession().isAuthenticated) {
+      return `<div class="card"><div class="alert alert-warning mb-0">Vui lòng đăng nhập tài khoản <strong>Player</strong> để duyệt Chợ P2P (MKT-04 yêu cầu JWT role Player).</div></div>`;
+    }
+    const userId = getSession().user?.userId;
     const totalPages = Math.max(1, Math.ceil(state.catalog.totalCount / state.catalog.pageSize));
 
     return `
       <div class="card">
         <div class="card-header">
           <div>
-            <h3 class="card-title">Duyệt Chợ P2P — MongoDB Read Model (MKT-02)</h3>
-            <p class="card-subtitle">Tìm kiếm nhanh trên catalog projection và mua với Idempotency-Key</p>
+            <h3 class="card-title">Duyệt Chợ P2P — MongoDB Read Model (MKT-04)</h3>
+            <p class="card-subtitle">Chỉ hiển thị tin <code>Active</code> • Mua trọn stack qua <code>MKT-03</code> kèm <code>Idempotency-Key</code></p>
           </div>
           <button id="btnRefreshCatalog" type="button" class="btn btn-sm btn-secondary">↻ Tải lại chợ</button>
         </div>
@@ -321,10 +382,14 @@ export function createMarketplaceModule(appCtx) {
 
         <form id="catalogFilterForm" class="form-row">
           <div class="form-group">
-            <label for="mktQ">Từ khóa</label>
+            <label for="mktQ">Từ khóa (q)</label>
             <input id="mktQ" type="text" value="${escapeHtml(state.filters.q)}" placeholder="Tên vật phẩm..." />
           </div>
-          <div class="form-group" style="max-width:150px;">
+          <div class="form-group" style="max-width:140px;">
+            <label for="mktCategory">Category</label>
+            <input id="mktCategory" type="text" value="${escapeHtml(state.filters.category)}" placeholder="Weapon..." />
+          </div>
+          <div class="form-group" style="max-width:140px;">
             <label for="mktRarity">Rarity</label>
             <select id="mktRarity">
               <option value="">Tất cả</option>
@@ -333,20 +398,20 @@ export function createMarketplaceModule(appCtx) {
                 .join("")}
             </select>
           </div>
-          <div class="form-group" style="max-width:130px;">
-            <label for="mktMinPrice">Giá từ (Gem)</label>
+          <div class="form-group" style="max-width:120px;">
+            <label for="mktMinPrice">Min Price</label>
             <input id="mktMinPrice" type="number" min="0" value="${escapeHtml(state.filters.minPrice)}" />
           </div>
-          <div class="form-group" style="max-width:130px;">
-            <label for="mktMaxPrice">Đến (Gem)</label>
+          <div class="form-group" style="max-width:120px;">
+            <label for="mktMaxPrice">Max Price</label>
             <input id="mktMaxPrice" type="number" min="0" value="${escapeHtml(state.filters.maxPrice)}" />
           </div>
-          <div class="form-group" style="max-width:160px;">
-            <label for="mktSort">Sắp xếp</label>
+          <div class="form-group" style="max-width:155px;">
+            <label for="mktSort">Sắp xếp (sort)</label>
             <select id="mktSort">
-              <option value="newest" ${state.filters.sort === "newest" ? "selected" : ""}>Mới nhất</option>
-              <option value="price_asc" ${state.filters.sort === "price_asc" ? "selected" : ""}>Giá tăng dần</option>
-              <option value="price_desc" ${state.filters.sort === "price_desc" ? "selected" : ""}>Giá giảm dần</option>
+              <option value="newest" ${state.filters.sort === "newest" ? "selected" : ""}>Mới nhất (newest)</option>
+              <option value="priceAsc" ${state.filters.sort === "priceAsc" ? "selected" : ""}>Giá tăng (priceAsc)</option>
+              <option value="priceDesc" ${state.filters.sort === "priceDesc" ? "selected" : ""}>Giá giảm (priceDesc)</option>
             </select>
           </div>
           <button type="submit" class="btn btn-primary">Lọc</button>
@@ -359,33 +424,36 @@ export function createMarketplaceModule(appCtx) {
                 ${state.catalog.items
                   .map((item, idx) => {
                     const rCls = rarityClass(item.rarity);
-                    const isMine = userId && String(item.sellerId) === String(userId);
+                    const isMine = userId && String(item.sellerId).toLowerCase() === String(userId).toLowerCase();
                     return `
                       <div class="item-card rarity-border-${rCls}">
                         <div>
                           <div class="item-card-top">
-                            <div class="item-name">${escapeHtml(item.itemName || item.name || "Vật phẩm")}</div>
-                            ${statusBadge(item.status || "Active")}
+                            <div class="item-name">${escapeHtml(item.itemName)} <span class="text-accent mono">×${escapeHtml(item.quantity)}</span></div>
+                            ${statusBadge(item.status)}
                           </div>
                           <div class="item-meta">
-                            <span class="badge rarity-${rCls}">${escapeHtml(item.rarity || "Common")}</span>
-                            ${item.category ? `<span class="badge badge-muted">${escapeHtml(item.category)}</span>` : ""}
+                            <span class="badge rarity-${rCls}">${escapeHtml(item.rarity)}</span>
+                            <span class="badge badge-muted">${escapeHtml(item.category)}</span>
                           </div>
                         </div>
 
                         <div class="item-price-block">
-                          <span class="text-muted" style="font-size:12px;">Giá bán</span>
-                          <span class="item-price-main">${formatGem(item.priceGem)} Gem</span>
+                          <div>
+                            <div class="text-muted" style="font-size:11px;">Tổng giá (grossGem)</div>
+                            <div class="text-muted mono" style="font-size:11px;">Đơn giá: ${formatGem(item.unitPrice)} / cái</div>
+                          </div>
+                          <span class="item-price-main">${formatGem(item.grossGem)} Gem</span>
                         </div>
 
                         <div class="item-kv-list">
-                          <div class="item-kv"><span class="text-muted">Listing</span>${renderIdChip(item.id || item.listingId)}</div>
-                          <div class="item-kv"><span class="text-muted">Người bán</span><span>${escapeHtml(item.sellerName || item.sellerId || "—")}</span></div>
+                          <div class="item-kv"><span class="text-muted">listingId</span>${renderIdChip(item.listingId)}</div>
+                          <div class="item-kv"><span class="text-muted">sellerId</span>${renderIdChip(item.sellerId)}</div>
                         </div>
 
                         <div class="item-actions">
                           <button type="button" class="btn btn-sm btn-secondary" data-detail-idx="${idx}">Chi tiết SQL</button>
-                          <button type="button" class="btn btn-sm btn-success" data-buy-idx="${idx}" ${isMine ? "disabled title='Không thể tự mua tin của mình'" : ""}>
+                          <button type="button" class="btn btn-sm btn-success" data-buy-idx="${idx}" ${isMine ? "disabled title='Không thể tự mua tin của mình (409 SELF_PURCHASE)'" : ""}>
                             ${isMine ? "Tin của bạn" : "Mua ngay (MKT-03)"}
                           </button>
                         </div>
@@ -411,22 +479,36 @@ export function createMarketplaceModule(appCtx) {
     if (!getSession().isAuthenticated) {
       return `<div class="card"><div class="alert alert-warning mb-0">Vui lòng đăng nhập để quản lý tin đăng bán của bạn.</div></div>`;
     }
+    const totalPages = Math.max(1, Math.ceil(state.mine.totalCount / state.mine.pageSize));
     return `
       <div class="card">
         <div class="card-header">
           <div>
-            <h3 class="card-title">Tin đăng bán của tôi</h3>
-            <p class="card-subtitle">Theo dõi trạng thái khóa vật phẩm và hủy tin đang mở bán</p>
+            <h3 class="card-title">Tin đăng bán của tôi (MKT-06)</h3>
+            <p class="card-subtitle">Đọc SQL authoritative theo seller • Lọc theo <code>status</code> (mặc định <code>Active</code>)</p>
           </div>
           <button id="btnRefreshMine" type="button" class="btn btn-sm btn-secondary">↻ Làm mới</button>
         </div>
+
+        <form id="mineFilterForm" class="form-row">
+          <div class="form-group" style="max-width:220px;">
+            <label for="mineStatusSelect">Trạng thái (status)</label>
+            <select id="mineStatusSelect">
+              ${LISTING_STATUSES.map((s) => `<option value="${s}" ${state.mine.status === s ? "selected" : ""}>${s}</option>`).join("")}
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary">Lọc tin</button>
+        </form>
+
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Listing ID</th>
                 <th>Vật phẩm</th>
-                <th>Giá (Gem)</th>
+                <th>SL</th>
+                <th>unitPrice</th>
+                <th>grossGem</th>
                 <th>Trạng thái</th>
                 <th>Ngày tạo</th>
                 <th>Thao tác</th>
@@ -435,24 +517,25 @@ export function createMarketplaceModule(appCtx) {
             <tbody>
               ${
                 state.mine.items.length === 0
-                  ? `<tr><td colspan="6" class="text-muted" style="text-align:center;padding:22px;">Bạn chưa có tin đăng bán nào.</td></tr>`
+                  ? `<tr><td colspan="8" class="text-muted" style="text-align:center;padding:22px;">Không có tin đăng bán nào ở trạng thái ${escapeHtml(state.mine.status)}.</td></tr>`
                   : state.mine.items
                       .map((l) => {
-                        const id = l.id || l.listingId;
-                        const canCancel = ["active", "open"].includes(String(l.status || "").toLowerCase());
+                        const canCancel = l.status === "Active";
                         return `
                           <tr>
-                            <td>${renderIdChip(id)}</td>
+                            <td>${renderIdChip(l.listingId)}</td>
                             <td>
-                              <strong>${escapeHtml(l.itemName || l.name || "—")}</strong>
-                              <span class="badge rarity-${rarityClass(l.rarity)}" style="margin-left:6px;">${escapeHtml(l.rarity || "Common")}</span>
+                              <strong>${escapeHtml(l.itemName)}</strong>
+                              <span class="badge rarity-${rarityClass(l.rarity)}" style="margin-left:6px;">${escapeHtml(l.rarity)}</span>
                             </td>
-                            <td class="mono">${formatGem(l.priceGem)}</td>
+                            <td class="mono">${escapeHtml(l.quantity)}</td>
+                            <td class="mono">${formatGem(l.unitPrice)}</td>
+                            <td class="mono text-warning" style="font-weight:700;">${formatGem(l.grossGem)}</td>
                             <td>${statusBadge(l.status)}</td>
                             <td>${escapeHtml(formatDateTime(l.createdAt))}</td>
                             <td>
-                              <button type="button" class="btn btn-xs btn-secondary" data-sql-id="${escapeHtml(id)}">SQL</button>
-                              <button type="button" class="btn btn-xs btn-danger" data-cancel-id="${escapeHtml(id)}" ${!canCancel ? "disabled" : ""}>Hủy tin</button>
+                              <button type="button" class="btn btn-xs btn-secondary" data-sql-id="${escapeHtml(l.listingId)}">SQL</button>
+                              <button type="button" class="btn btn-xs btn-danger" data-cancel-id="${escapeHtml(l.listingId)}" ${!canCancel ? "disabled" : ""}>Hủy tin</button>
                             </td>
                           </tr>
                         `;
@@ -462,6 +545,14 @@ export function createMarketplaceModule(appCtx) {
             </tbody>
           </table>
         </div>
+
+        <div class="pagination-bar">
+          <span>Trang ${state.mine.page} / ${totalPages} (Tổng ${state.mine.totalCount} tin)</span>
+          <div class="header-actions">
+            <button id="btnMinePrev" type="button" class="btn btn-xs btn-secondary" ${state.mine.page <= 1 ? "disabled" : ""}>← Trước</button>
+            <button id="btnMineNext" type="button" class="btn btn-xs btn-secondary" ${state.mine.page >= totalPages ? "disabled" : ""}>Sau →</button>
+          </div>
+        </div>
       </div>
     `;
   }
@@ -470,24 +561,46 @@ export function createMarketplaceModule(appCtx) {
     if (!getSession().isAuthenticated) {
       return `<div class="card"><div class="alert alert-warning mb-0">Vui lòng đăng nhập để xem lịch sử giao dịch P2P.</div></div>`;
     }
+    const userId = String(getSession().user?.userId || "").toLowerCase();
     const totalPages = Math.max(1, Math.ceil(state.history.totalCount / state.history.pageSize));
     return `
       <div class="card">
         <div class="card-header">
           <div>
-            <h3 class="card-title">Lịch sử giao dịch & Saga (MKT-08)</h3>
-            <p class="card-subtitle">Mở lại Live Saga Tracker cho bất kỳ Trade ID nào</p>
+            <h3 class="card-title">Lịch sử giao dịch & Saga (MKT-07 / MKT-08)</h3>
+            <p class="card-subtitle">Lọc theo <code>side</code> và <code>status</code> • Mở lại Live Saga Tracker cho bất kỳ Trade ID nào</p>
           </div>
           <button id="btnRefreshHistory" type="button" class="btn btn-sm btn-secondary">↻ Làm mới</button>
         </div>
+
+        <form id="historyFilterForm" class="form-row">
+          <div class="form-group" style="max-width:170px;">
+            <label for="histSideSelect">Vai trò (side)</label>
+            <select id="histSideSelect">
+              <option value="all" ${state.history.side === "all" ? "selected" : ""}>Tất cả (all)</option>
+              <option value="buy" ${state.history.side === "buy" ? "selected" : ""}>Mua (buy)</option>
+              <option value="sell" ${state.history.side === "sell" ? "selected" : ""}>Bán (sell)</option>
+            </select>
+          </div>
+          <div class="form-group" style="max-width:210px;">
+            <label for="histStatusSelect">Trạng thái (status)</label>
+            <select id="histStatusSelect">
+              ${TRADE_STATUSES.map((s) => `<option value="${s}" ${state.history.status === s ? "selected" : ""}>${s}</option>`).join("")}
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary">Lọc lịch sử</button>
+        </form>
+
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Trade ID</th>
-                <th>Vật phẩm</th>
-                <th>Giá (Gem)</th>
-                <th>Phí 5%</th>
+                <th>Chiều</th>
+                <th>Template / SL</th>
+                <th>grossGem</th>
+                <th>feeGem</th>
+                <th>sellerNetGem</th>
                 <th>Trạng thái Saga</th>
                 <th>Thời gian</th>
                 <th>Theo dõi</th>
@@ -496,22 +609,29 @@ export function createMarketplaceModule(appCtx) {
             <tbody>
               ${
                 state.history.items.length === 0
-                  ? `<tr><td colspan="7" class="text-muted" style="text-align:center;padding:22px;">Chưa có giao dịch nào.</td></tr>`
+                  ? `<tr><td colspan="9" class="text-muted" style="text-align:center;padding:22px;">Không có giao dịch nào khớp bộ lọc.</td></tr>`
                   : state.history.items
                       .map((t) => {
-                        const id = t.id || t.tradeId;
+                        const isBuyer = userId && String(t.buyerId || "").toLowerCase() === userId;
+                        const tplName = getTemplateName(t.templateId);
                         return `
                           <tr>
-                            <td>${renderIdChip(id)}</td>
-                            <td>${escapeHtml(t.itemName || "—")}</td>
-                            <td class="mono">${formatGem(t.grossGem ?? t.priceGem)}</td>
-                            <td class="mono text-warning">${formatGem(t.feeGem ?? 0)}</td>
+                            <td>${renderIdChip(t.tradeId)}</td>
+                            <td>${isBuyer ? `<span class="badge badge-info">Buy</span>` : `<span class="badge badge-success">Sell</span>`}</td>
                             <td>
-                              ${statusBadge(t.status || t.state)}
-                              ${t.requiresReview ? `<span class="badge badge-warning">Review</span>` : ""}
+                              ${tplName ? `<strong>${escapeHtml(tplName)}</strong> ` : renderIdChip(t.templateId)}
+                              <span class="mono text-muted">×${escapeHtml(t.quantity)}</span>
+                            </td>
+                            <td class="mono">${formatGem(t.grossGem)}</td>
+                            <td class="mono text-warning">${formatGem(t.feeGem)}</td>
+                            <td class="mono text-success">${formatGem(t.sellerNetGem)}</td>
+                            <td>
+                              ${statusBadge(t.status)}
+                              ${t.failureCode ? `<div class="mono text-danger" style="font-size:11px;margin-top:2px;">${escapeHtml(t.failureCode)}</div>` : ""}
+                              ${t.requiresReview ? `<span class="badge badge-warning" style="margin-top:2px;">requiresReview</span>` : ""}
                             </td>
                             <td>${escapeHtml(formatDateTime(t.createdAt))}</td>
-                            <td><button type="button" class="btn btn-xs btn-primary" data-track-trade="${escapeHtml(id)}">Mở Saga</button></td>
+                            <td><button type="button" class="btn btn-xs btn-primary" data-track-trade="${escapeHtml(t.tradeId)}">Mở Saga</button></td>
                           </tr>
                         `;
                       })
@@ -534,9 +654,9 @@ export function createMarketplaceModule(appCtx) {
   function render() {
     panel.innerHTML = `
       <div class="sub-nav">
-        <button type="button" class="sub-tab ${state.subTab === "catalog" ? "active" : ""}" data-subtab="catalog">Duyệt Chợ (Catalog)</button>
-        <button type="button" class="sub-tab ${state.subTab === "mine" ? "active" : ""}" data-subtab="mine">Tin của tôi</button>
-        <button type="button" class="sub-tab ${state.subTab === "history" ? "active" : ""}" data-subtab="history">Lịch sử giao dịch</button>
+        <button type="button" class="sub-tab ${state.subTab === "catalog" ? "active" : ""}" data-subtab="catalog">Duyệt Chợ (MKT-04)</button>
+        <button type="button" class="sub-tab ${state.subTab === "mine" ? "active" : ""}" data-subtab="mine">Tin của tôi (MKT-06)</button>
+        <button type="button" class="sub-tab ${state.subTab === "history" ? "active" : ""}" data-subtab="history">Lịch sử giao dịch (MKT-07)</button>
       </div>
       ${state.subTab === "catalog" ? renderCatalogSubTab() : ""}
       ${state.subTab === "mine" ? renderMineSubTab() : ""}
@@ -562,11 +682,27 @@ export function createMarketplaceModule(appCtx) {
     panel.querySelector("#catalogFilterForm")?.addEventListener("submit", (e) => {
       e.preventDefault();
       state.filters.q = panel.querySelector("#mktQ").value.trim();
+      state.filters.category = panel.querySelector("#mktCategory").value.trim();
       state.filters.rarity = panel.querySelector("#mktRarity").value;
       state.filters.minPrice = panel.querySelector("#mktMinPrice").value;
       state.filters.maxPrice = panel.querySelector("#mktMaxPrice").value;
       state.filters.sort = panel.querySelector("#mktSort").value;
       state.catalog.page = 1;
+      loadCurrentSubTab();
+    });
+
+    panel.querySelector("#mineFilterForm")?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      state.mine.status = panel.querySelector("#mineStatusSelect").value;
+      state.mine.page = 1;
+      loadCurrentSubTab();
+    });
+
+    panel.querySelector("#historyFilterForm")?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      state.history.side = panel.querySelector("#histSideSelect").value;
+      state.history.status = panel.querySelector("#histStatusSelect").value;
+      state.history.page = 1;
       loadCurrentSubTab();
     });
 
@@ -577,7 +713,7 @@ export function createMarketplaceModule(appCtx) {
     panel.querySelectorAll("[data-detail-idx]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const item = state.catalog.items[Number(btn.dataset.detailIdx)];
-        if (item) openListingDetailModal(item.id || item.listingId, item);
+        if (item) openListingDetailModal(item.listingId, item);
       });
     });
 
@@ -608,6 +744,16 @@ export function createMarketplaceModule(appCtx) {
     });
     panel.querySelector("#btnCatNext")?.addEventListener("click", () => {
       state.catalog.page += 1;
+      loadCurrentSubTab();
+    });
+    panel.querySelector("#btnMinePrev")?.addEventListener("click", () => {
+      if (state.mine.page > 1) {
+        state.mine.page -= 1;
+        loadCurrentSubTab();
+      }
+    });
+    panel.querySelector("#btnMineNext")?.addEventListener("click", () => {
+      state.mine.page += 1;
       loadCurrentSubTab();
     });
     panel.querySelector("#btnHistPrev")?.addEventListener("click", () => {

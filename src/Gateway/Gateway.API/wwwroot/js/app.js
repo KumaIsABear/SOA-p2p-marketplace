@@ -5,12 +5,14 @@ import {
   escapeHtml,
   getActivityLogs,
   getApiBaseUrl,
+  getDemoRbacEnabled,
   getSession,
   onLogsChange,
   onSessionChange,
   refreshAccessToken,
   renderIdChip,
   setApiBaseUrl,
+  setDemoRbacEnabled,
   showToast,
   statusBadge,
 } from "./api.js";
@@ -18,9 +20,17 @@ import { createAuthModule } from "./auth.js";
 import { createWalletModule } from "./wallet.js";
 import { createInventoryModule } from "./inventory.js";
 import { createMarketplaceModule } from "./marketplace.js";
+import { createGmModule } from "./gm.js";
+import { createCsModule } from "./cs.js";
 
 const tabModules = new Map();
 let activeTab = "auth";
+
+const ROLE_TABS = {
+  Player: ["wallet", "inventory", "marketplace"],
+  GM: ["gm"],
+  CS: ["cs"],
+};
 
 const appCtx = {
   getActiveTab: () => activeTab,
@@ -32,14 +42,15 @@ const appCtx = {
     }
   },
   refreshAllActiveData() {
-    ["wallet", "inventory", "marketplace", "gm", "cs"].forEach((tab) => {
+    const role = getSession().user?.role;
+    const tabs = ROLE_TABS[role] || [];
+    tabs.forEach((tab) => {
       const mod = tabModules.get(tab);
       if (mod && typeof mod.refresh === "function") mod.refresh();
     });
   },
 };
 
-// Extension hook cho Phần 2 (gm.js & cs.js)
 export function registerTabModule(tabName, moduleInstance) {
   tabModules.set(tabName, moduleInstance);
   if (typeof moduleInstance?.init === "function") {
@@ -50,6 +61,31 @@ export function registerTabModule(tabName, moduleInstance) {
   }
 }
 window.registerTabModule = registerTabModule;
+
+function updateTabVisibility(session) {
+  const demoRbac = getDemoRbacEnabled();
+  const role = session.isAuthenticated ? session.user?.role || "" : "";
+  let activeTabVisible = false;
+
+  document.querySelectorAll(".nav-tab").forEach((btn) => {
+    const tab = btn.dataset.tab;
+    const allowedRoles = (btn.dataset.roles || "ALL").split(",");
+    const isAlwaysVisible = allowedRoles.includes("ALL");
+    const isRoleMatch = Boolean(role) && allowedRoles.includes(role);
+
+    const visible = isAlwaysVisible || demoRbac || isRoleMatch;
+    btn.classList.toggle("hidden", !visible);
+    btn.classList.toggle("out-of-role", demoRbac && !isAlwaysVisible && !isRoleMatch);
+
+    if (tab === activeTab && visible) {
+      activeTabVisible = true;
+    }
+  });
+
+  if (!activeTabVisible) {
+    switchTab("auth");
+  }
+}
 
 function switchTab(tabName) {
   activeTab = tabName;
@@ -84,11 +120,12 @@ function renderHeaderAndBanner(session) {
     pill.innerHTML = `<span class="badge badge-muted">Chưa đăng nhập</span>`;
     banner.className = "status-banner hidden";
     banner.innerHTML = "";
+    updateTabVisibility(session);
     return;
   }
 
   const u = session.user;
-  const display = u.displayName || u.username || u.email || "User";
+  const display = u.displayName || u.email || "User";
   pill.innerHTML = `
     <strong>${escapeHtml(display)}</strong>
     ${statusBadge(u.role || "Player")}
@@ -98,14 +135,16 @@ function renderHeaderAndBanner(session) {
   const st = String(u.status || "Active");
   if (st === "TradeRestricted") {
     banner.className = "status-banner warning";
-    banner.innerHTML = `<span>⚠ Tài khoản đang ở trạng thái <strong>TradeRestricted</strong> — không thể đăng bán hoặc mua vật phẩm P2P.</span>`;
+    banner.innerHTML = `<span>⚠ Tài khoản đang ở trạng thái <strong>TradeRestricted</strong> — bị chặn tạo listing (MKT-01) và mua hàng (MKT-03), nhưng vẫn xem, hủy tin và nạp Gem được.</span>`;
   } else if (st === "Banned") {
     banner.className = "status-banner danger";
-    banner.innerHTML = `<span>⛔ Tài khoản đang bị <strong>Banned</strong> — các thao tác giao dịch sẽ bị từ chối bởi hệ thống.</span>`;
+    banner.innerHTML = `<span>⛔ Tài khoản đang bị <strong>Banned</strong> — toàn bộ protected routes sẽ trả <code>403 ACCOUNT_BANNED</code>.</span>`;
   } else {
     banner.className = "status-banner hidden";
     banner.innerHTML = "";
   }
+
+  updateTabVisibility(session);
 }
 
 function renderActivityDrawer() {
@@ -170,7 +209,6 @@ function renderActivityDrawer() {
 }
 
 function initGlobalControls(authMod) {
-  // Base URL Controls
   const baseInput = document.getElementById("apiBaseUrlInput");
   baseInput.value = getApiBaseUrl();
 
@@ -187,20 +225,35 @@ function initGlobalControls(authMod) {
     showToast("Đã lưu API Base URL", saved || "(same-origin)", "success", 2000);
   });
 
-  // Header Actions
+  // Demo RBAC Toggle
+  const chkDemoRbac = document.getElementById("chkDemoRbac");
+  if (chkDemoRbac) {
+    chkDemoRbac.checked = getDemoRbacEnabled();
+    chkDemoRbac.addEventListener("change", (e) => {
+      setDemoRbacEnabled(e.target.checked);
+      updateTabVisibility(getSession());
+      showToast(
+        e.target.checked ? "Demo RBAC: BẬT" : "Demo RBAC: TẮT",
+        e.target.checked
+          ? "Hiện mọi tab (viền đứt màu vàng = ngoài role hiện tại) để test 403 FORBIDDEN."
+          : "Chỉ hiện tab đúng role hiện tại.",
+        "info",
+        2800
+      );
+    });
+  }
+
   document.getElementById("btnHeaderMe")?.addEventListener("click", () => authMod.fetchMe(false));
   document.getElementById("btnHeaderRefresh")?.addEventListener("click", async () => {
     const ok = await refreshAccessToken();
-    showToast(ok ? "Refresh Token thành công" : "Refresh Token thất bại", "", ok ? "success" : "danger");
+    showToast(ok ? "Refresh Token thành công (AUTH-03)" : "Refresh Token thất bại", "", ok ? "success" : "danger");
   });
   document.getElementById("btnHeaderLogout")?.addEventListener("click", () => authMod.logout());
 
-  // Navigation Tabs
   document.querySelectorAll(".nav-tab").forEach((btn) => {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
   });
 
-  // Modal Close
   document.getElementById("btnModalClose")?.addEventListener("click", closeModal);
   document.getElementById("modalBackdrop")?.addEventListener("click", (e) => {
     if (e.target.id === "modalBackdrop") closeModal();
@@ -209,13 +262,11 @@ function initGlobalControls(authMod) {
     if (e.key === "Escape") closeModal();
   });
 
-  // Delegated Copy Button for all .id-chip-copy
   document.addEventListener("click", (e) => {
     const copyBtn = e.target.closest("[data-copy]");
     if (copyBtn) copyToClipboard(copyBtn.dataset.copy);
   });
 
-  // Activity Drawer Controls
   const drawer = document.getElementById("activityDrawer");
   const btnToggle = document.getElementById("btnToggleDrawer");
   const btnExpand = document.getElementById("btnExpandDrawer");
@@ -242,6 +293,8 @@ async function bootstrap() {
   const walletMod = createWalletModule(appCtx);
   const inventoryMod = createInventoryModule(appCtx);
   const marketplaceMod = createMarketplaceModule(appCtx);
+  const gmMod = createGmModule(appCtx);
+  const csMod = createCsModule(appCtx);
 
   tabModules.set("auth", authMod);
   tabModules.set("wallet", walletMod);
@@ -259,6 +312,8 @@ async function bootstrap() {
   walletMod.init();
   inventoryMod.init();
   marketplaceMod.init();
+  registerTabModule("gm", gmMod);
+  registerTabModule("cs", csMod);
 
   if (getSession().isAuthenticated) {
     await authMod.fetchMe(true);
